@@ -11,14 +11,14 @@ public struct VisualizerUI: View {
 
     public var body: some View {
         ZStack {
-            backgroundCanvas
+            BlueHourBackground()
             pulsingCircleCanvas
             spectrumCanvas
-            hud
-            transport
+            hudGlass
+            transportGlass
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.ignoresSafeArea())
+        .tint(StudioJoeColors.accent)
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showPicker) {
             MusicPickerView(
                 onPick: { url in
@@ -36,29 +36,8 @@ public struct VisualizerUI: View {
                isPresented: $drmWarning,
                actions: { Button("OK") {} },
                message: {
-                   Text("Apple Music subscription downloads are DRM-protected and have no file URL. Pick a track you own (iTunes purchase, imported, or iTunes Match).")
+                   Text("Apple Music subscription downloads are DRM-protected. Pick a track you own (iTunes purchase, imported, or iTunes Match).")
                })
-    }
-
-    private var backgroundCanvas: some View {
-        Canvas { ctx, size in
-            let pulse = CGFloat(viewModel.beatPulse)
-            let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let maxR = max(size.width, size.height) * (0.55 + pulse * 0.15)
-            let gradient = Gradient(colors: [
-                Color(hue: 0.62, saturation: 0.55, brightness: 0.32)
-                    .opacity(0.4 + Double(pulse) * 0.25),
-                Color.black
-            ])
-            let rect = CGRect(x: center.x - maxR, y: center.y - maxR,
-                              width: maxR * 2, height: maxR * 2)
-            ctx.fill(Circle().path(in: rect),
-                     with: .radialGradient(gradient,
-                                           center: center,
-                                           startRadius: 0,
-                                           endRadius: maxR))
-        }
-        .ignoresSafeArea()
     }
 
     private var pulsingCircleCanvas: some View {
@@ -99,11 +78,11 @@ public struct VisualizerUI: View {
             let bins = viewModel.magnitudes
             guard !bins.isEmpty else { return }
             let spacing: CGFloat = 3
-            let margin: CGFloat = 16
+            let margin: CGFloat = 24
             let totalSpacing = spacing * CGFloat(bins.count - 1)
             let barW = max(1, (size.width - margin * 2 - totalSpacing) / CGFloat(bins.count))
-            let maxH = size.height * 0.32
-            let baseY = size.height - 120
+            let maxH = size.height * 0.30
+            let baseY = size.height - 160
 
             for (i, m) in bins.enumerated() {
                 let h = max(2, CGFloat(m) * maxH)
@@ -126,47 +105,57 @@ public struct VisualizerUI: View {
         .allowsHitTesting(false)
     }
 
-    private var hud: some View {
+    private var hudGlass: some View {
         VStack {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(viewModel.currentBPM > 0
                          ? "\(Int(viewModel.currentBPM)) BPM"
                          : "— BPM")
                         .font(.system(.title3, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(String(format: "bass %.2f   mid %.2f   treble %.2f",
+                        .foregroundStyle(StudioJoeColors.label1)
+                    Text(String(format: "bass %.2f · mid %.2f · treble %.2f",
                                 viewModel.bass, viewModel.mid, viewModel.treble))
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(StudioJoeColors.label2)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
             Spacer()
         }
     }
 
-    private var transport: some View {
+    private var transportGlass: some View {
         VStack {
             Spacer()
-            HStack(spacing: 20) {
-                Button { showPicker = true } label: {
-                    Label("Pick Song", systemImage: "music.note.list")
-                        .font(.system(.body, weight: .semibold))
-                }
-                .buttonStyle(.borderedProminent)
+            GlassEffectContainer(spacing: 12) {
+                HStack(spacing: 12) {
+                    Button {
+                        showPicker = true
+                    } label: {
+                        Label("Pick Song", systemImage: "music.note.list")
+                            .font(.system(.body, weight: .semibold))
+                            .padding(.horizontal, 4)
+                    }
+                    .buttonStyle(.glassProminent)
 
-                Button { viewModel.togglePlayPause() } label: {
-                    Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
+                    Button {
+                        viewModel.togglePlayPause()
+                    } label: {
+                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(viewModel.durationSec == 0)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(viewModel.durationSec == 0)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, 28)
         }
     }
 }
