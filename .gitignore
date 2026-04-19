@@ -25,6 +25,7 @@ Packages/*/.swiftpm/
 *.p8
 *.p12
 *.pem
+Secrets.xcconfig
 
 ## Editor
 .vscode/

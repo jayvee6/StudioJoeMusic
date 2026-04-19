@@ -18,6 +18,17 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.studiojoe.StudioJoeMusic.spotify</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>studiojoe-musicplayer</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -26,6 +37,8 @@
 	<string>Pick a song from your library to play through the visualizer.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>For Apple Music subscription downloads (which are DRM-protected), the visualizer listens through the mic to react to audio playing on the speaker.</string>
+	<key>SPOTIFY_CLIENT_ID</key>
+	<string>$(SPOTIFY_CLIENT_ID)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

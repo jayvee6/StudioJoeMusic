@@ -45,6 +45,20 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         }
     }
 
+    public func play(remoteURL: URL, title: String?, artist: String?, durationSec: TimeInterval = 0) async {
+        do {
+            try await conductor.load(remoteURL: remoteURL,
+                                     title: title,
+                                     artist: artist,
+                                     durationSec: durationSec)
+            conductor.play()
+            errorMessage = nil
+        } catch {
+            errorMessage = Self.verboseMessage(for: error)
+            print("[VisualizerViewModel] remote load error: \(error as NSError)")
+        }
+    }
+
     private static func verboseMessage(for error: Error) -> String {
         let ns = error as NSError
         var parts: [String] = ["\(ns.domain) (\(ns.code))"]

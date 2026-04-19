@@ -3,6 +3,7 @@ import SwiftUI
 public struct VisualizerUI: View {
     @ObservedObject public var viewModel: VisualizerViewModel
     @State private var showPicker = false
+    @State private var showSpotify = false
     @State private var currentMode: VisualizerMode = .bars
 
     public init(viewModel: VisualizerViewModel) {
@@ -27,6 +28,11 @@ public struct VisualizerUI: View {
                 },
                 onCancel: { showPicker = false }
             )
+        }
+        .sheet(isPresented: $showSpotify) {
+            SpotifyLibraryView(viewModel: viewModel) {
+                showSpotify = false
+            }
         }
         .alert("Playback error",
                isPresented: Binding(
@@ -169,11 +175,20 @@ public struct VisualizerUI: View {
                     Button {
                         showPicker = true
                     } label: {
-                        Label("Pick Song", systemImage: "music.note.list")
+                        Label("Library", systemImage: "music.note.list")
                             .font(.system(.body, weight: .semibold))
                             .padding(.horizontal, 4)
                     }
                     .buttonStyle(.glassProminent)
+
+                    Button {
+                        showSpotify = true
+                    } label: {
+                        Label("Spotify", systemImage: "music.note.house")
+                            .font(.system(.body, weight: .semibold))
+                            .padding(.horizontal, 4)
+                    }
+                    .buttonStyle(.glass)
 
                     Button {
                         viewModel.togglePlayPause()

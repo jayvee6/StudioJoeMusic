@@ -81,6 +81,19 @@ public final class AudioConductor: @unchecked Sendable {
         }
     }
 
+    /// Load a remote / local audio URL directly — used for Spotify preview mp3 etc.
+    public func load(remoteURL: URL,
+                     title: String?,
+                     artist: String?,
+                     durationSec: TimeInterval = 0) async throws {
+        log.info("load(remoteURL:) — \(remoteURL.absoluteString, privacy: .private)")
+        await MainActor.run {
+            self.currentTitle = title
+            self.currentArtist = artist
+        }
+        try await loadFile(url: remoteURL, duration: durationSec)
+    }
+
     public func play() {
         switch mode {
         case .file:
@@ -292,8 +305,24 @@ public final class AudioConductor: @unchecked Sendable {
 
     private func ensureLocalFile(url: URL) async throws -> URL {
         if url.isFileURL { return url }
-        log.info("Non-file URL scheme '\(url.scheme ?? "nil", privacy: .public)' — exporting to temp file")
+        let scheme = url.scheme?.lowercased() ?? ""
+        log.info("Non-file URL scheme '\(scheme, privacy: .public)' — normalizing to temp file")
 
+        if scheme == "https" || scheme == "http" {
+            // Preview mp3 from Spotify / Apple Music — direct download
+            let (tmpSrc, _) = try await URLSession.shared.download(from: url)
+            let dst = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(url.pathExtension.isEmpty ? "mp3" : url.pathExtension)
+            try? FileManager.default.removeItem(at: dst)
+            try FileManager.default.moveItem(at: tmpSrc, to: dst)
+            cleanupTempFile()
+            exportedTempURL = dst
+            log.info("Downloaded \(dst.lastPathComponent, privacy: .public)")
+            return dst
+        }
+
+        // iPod library asset — transcode via AVAssetExportSession
         let asset = AVURLAsset(url: url)
         let tracks = try await asset.loadTracks(withMediaType: .audio)
         guard !tracks.isEmpty else {
