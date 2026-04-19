@@ -45,6 +45,7 @@ public struct MetalVisualizerView: UIViewRepresentable {
 
         private var renderers: [VisualizerMode: VisualizerRenderer] = [:]
         private let startTime = CACurrentMediaTime()
+        private var emojiAtlas: EmojiAtlas?
 
         init(viewModel: VisualizerViewModel, initialMode: VisualizerMode) {
             self.viewModel = viewModel
@@ -55,6 +56,10 @@ public struct MetalVisualizerView: UIViewRepresentable {
                 fatalError("Metal unavailable: \(error)")
             }
             super.init()
+            self.emojiAtlas = try? EmojiAtlas(device: metalContext.device)
+            if emojiAtlas == nil {
+                print("[MetalVisualizerView] EmojiAtlas failed to build; emoji modes disabled")
+            }
         }
 
         public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -78,7 +83,8 @@ public struct MetalVisualizerView: UIViewRepresentable {
             do {
                 guard let r = try VisualizerFactory.make(mode: mode,
                                                           context: metalContext,
-                                                          pixelFormat: pixelFormat) else {
+                                                          pixelFormat: pixelFormat,
+                                                          atlas: emojiAtlas) else {
                     return nil
                 }
                 renderers[mode] = r
