@@ -3,6 +3,7 @@ import SwiftUI
 public struct VisualizerUI: View {
     @ObservedObject public var viewModel: VisualizerViewModel
     @State private var showPicker = false
+    @State private var currentMode: VisualizerMode = .bars
 
     public init(viewModel: VisualizerViewModel) {
         self.viewModel = viewModel
@@ -11,8 +12,8 @@ public struct VisualizerUI: View {
     public var body: some View {
         ZStack {
             BlueHourBackground()
+            renderer
             pulsingCircleCanvas
-            spectrumCanvas
             hudGlass
             transportGlass
         }
@@ -36,8 +37,20 @@ public struct VisualizerUI: View {
                message: { Text(viewModel.errorMessage ?? "") })
     }
 
+    @ViewBuilder
+    private var renderer: some View {
+        switch currentMode {
+        case .bars:
+            spectrumCanvas
+        case .blob:
+            MetalVisualizerView(viewModel: viewModel)
+                .ignoresSafeArea()
+        }
+    }
+
     private var pulsingCircleCanvas: some View {
         Canvas { ctx, size in
+            guard currentMode == .bars else { return }
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
             let baseR: CGFloat = min(size.width, size.height) * 0.18
             let pulseR = baseR * (1 + CGFloat(viewModel.beatPulse) * 0.35)
@@ -78,7 +91,7 @@ public struct VisualizerUI: View {
             let totalSpacing = spacing * CGFloat(bins.count - 1)
             let barW = max(1, (size.width - margin * 2 - totalSpacing) / CGFloat(bins.count))
             let maxH = size.height * 0.30
-            let baseY = size.height - 160
+            let baseY = size.height - 180
 
             for (i, m) in bins.enumerated() {
                 let h = max(2, CGFloat(m) * maxH)
@@ -150,6 +163,8 @@ public struct VisualizerUI: View {
     private var transportGlass: some View {
         VStack {
             Spacer()
+            modeSwitcher
+                .padding(.bottom, 14)
             GlassEffectContainer(spacing: 12) {
                 HStack(spacing: 12) {
                     Button {
@@ -173,6 +188,38 @@ public struct VisualizerUI: View {
                 }
             }
             .padding(.bottom, 28)
+        }
+    }
+
+    private var modeSwitcher: some View {
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(VisualizerMode.allCases) { mode in
+                    modePill(for: mode)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func modePill(for mode: VisualizerMode) -> some View {
+        let selected = (currentMode == mode)
+        let label = Label(mode.title, systemImage: mode.symbol)
+            .labelStyle(.titleAndIcon)
+            .font(.system(.footnote, weight: .semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+        if selected {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { currentMode = mode }
+            } label: { label }
+            .buttonStyle(.glassProminent)
+        } else {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { currentMode = mode }
+            } label: { label }
+            .buttonStyle(.glass)
         }
     }
 }
