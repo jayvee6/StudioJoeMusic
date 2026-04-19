@@ -39,12 +39,11 @@ public struct VisualizerUI: View {
 
     @ViewBuilder
     private var renderer: some View {
-        switch currentMode {
-        case .bars:
-            spectrumCanvas
-        case .blob:
-            MetalVisualizerView(viewModel: viewModel)
+        if currentMode.isMetal {
+            MetalVisualizerView(viewModel: viewModel, mode: currentMode)
                 .ignoresSafeArea()
+        } else {
+            spectrumCanvas
         }
     }
 
