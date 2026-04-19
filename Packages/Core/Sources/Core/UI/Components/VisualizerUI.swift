@@ -3,7 +3,6 @@ import SwiftUI
 public struct VisualizerUI: View {
     @ObservedObject public var viewModel: VisualizerViewModel
     @State private var showPicker = false
-    @State private var drmWarning = false
 
     public init(viewModel: VisualizerViewModel) {
         self.viewModel = viewModel
@@ -21,23 +20,13 @@ public struct VisualizerUI: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showPicker) {
             MusicPickerView(
-                onPick: { url in
+                onPick: { item in
                     showPicker = false
-                    Task { await viewModel.play(url: url) }
+                    Task { await viewModel.play(item: item) }
                 },
-                onCancel: { showPicker = false },
-                onDRMTrack: {
-                    showPicker = false
-                    drmWarning = true
-                }
+                onCancel: { showPicker = false }
             )
         }
-        .alert("Can't play this track",
-               isPresented: $drmWarning,
-               actions: { Button("OK") {} },
-               message: {
-                   Text("Apple Music subscription downloads are DRM-protected. Pick a track you own (iTunes purchase, imported, or iTunes Match).")
-               })
         .alert("Playback error",
                isPresented: Binding(
                    get: { viewModel.errorMessage != nil },
@@ -114,7 +103,7 @@ public struct VisualizerUI: View {
 
     private var hudGlass: some View {
         VStack {
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(viewModel.currentBPM > 0
                          ? "\(Int(viewModel.currentBPM)) BPM"
@@ -125,16 +114,37 @@ public struct VisualizerUI: View {
                                 viewModel.bass, viewModel.mid, viewModel.treble))
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(StudioJoeColors.label2)
+                    if let title = viewModel.currentTitle {
+                        Text(viewModel.currentArtist?.isEmpty == false
+                             ? "\(title) — \(viewModel.currentArtist!)"
+                             : title)
+                            .font(.system(.caption, weight: .medium))
+                            .foregroundStyle(StudioJoeColors.label2)
+                            .lineLimit(1)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .glassEffect(.regular, in: .rect(cornerRadius: 18))
                 Spacer()
+                if viewModel.mode == .system {
+                    micBadge
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
             Spacer()
         }
+    }
+
+    private var micBadge: some View {
+        Label("Live mic", systemImage: "mic.fill")
+            .font(.system(.caption, design: .rounded, weight: .semibold))
+            .foregroundStyle(StudioJoeColors.label1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .glassEffect(.regular.tint(StudioJoeColors.accent.opacity(0.35)),
+                         in: .capsule)
     }
 
     private var transportGlass: some View {
@@ -159,7 +169,7 @@ public struct VisualizerUI: View {
                             .frame(width: 32, height: 32)
                     }
                     .buttonStyle(.glass)
-                    .disabled(viewModel.durationSec == 0)
+                    .disabled(viewModel.mode == .idle)
                 }
             }
             .padding(.bottom, 28)

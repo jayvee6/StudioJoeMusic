@@ -35,6 +35,7 @@ targets:
       properties:
         CFBundleDisplayName: StudioJoe Music
         NSAppleMusicUsageDescription: "Pick a song from your library to play through the visualizer."
+        NSMicrophoneUsageDescription: "For Apple Music subscription downloads (which are DRM-protected), the visualizer listens through the mic to react to audio playing on the speaker."
         UILaunchScreen:
           UIImageName: ""
         UIApplicationSceneManifest:

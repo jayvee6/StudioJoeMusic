@@ -1,8 +1,15 @@
 import AVFoundation
+import MediaPlayer
 import Observation
 import os
 
 private let log = Logger(subsystem: "dev.studiojoe.Core", category: "AudioConductor")
+
+public enum PlaybackMode: Sendable, Equatable {
+    case idle
+    case file     // AVAudioPlayerNode → mainMixerNode tap (owned tracks)
+    case system   // MPMusicPlayerController + inputNode (mic) tap (DRM tracks)
+}
 
 @Observable
 public final class AudioConductor: @unchecked Sendable {
@@ -12,28 +19,123 @@ public final class AudioConductor: @unchecked Sendable {
     public private(set) var isPlaying: Bool = false
     public private(set) var positionSec: Double = 0
     public private(set) var durationSec: Double = 0
-    public private(set) var lastErrorMessage: String?
+    public private(set) var mode: PlaybackMode = .idle
+    public private(set) var currentTitle: String?
+    public private(set) var currentArtist: String?
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let fft = FFTCore(fftSize: 1024, binCount: 32)
     private let bpm = OnsetBPMDetector()
+    private let systemPlayer = MPMusicPlayerController.applicationMusicPlayer
+
     private var audioFile: AVAudioFile?
-    private var tapInstalled = false
+    private var activeTap: TapKind = .none
     private var exportedTempURL: URL?
+    private var positionTimer: Timer?
+    private var stateObserver: NSObjectProtocol?
+    private var nowPlayingObserver: NSObjectProtocol?
+
+    private enum TapKind { case none, mixer, mic }
 
     public init() {
         engine.attach(player)
+
+        stateObserver = NotificationCenter.default.addObserver(
+            forName: .MPMusicPlayerControllerPlaybackStateDidChange,
+            object: systemPlayer,
+            queue: .main
+        ) { [weak self] _ in self?.systemPlaybackStateChanged() }
+
+        nowPlayingObserver = NotificationCenter.default.addObserver(
+            forName: .MPMusicPlayerControllerNowPlayingItemDidChange,
+            object: systemPlayer,
+            queue: .main
+        ) { [weak self] _ in self?.systemNowPlayingChanged() }
+
+        systemPlayer.beginGeneratingPlaybackNotifications()
     }
 
-    public func load(url: URL) async throws {
-        let localURL = try await ensureLocalFile(url: url)
+    deinit {
+        if let s = stateObserver { NotificationCenter.default.removeObserver(s) }
+        if let n = nowPlayingObserver { NotificationCenter.default.removeObserver(n) }
+        systemPlayer.endGeneratingPlaybackNotifications()
+        positionTimer?.invalidate()
+    }
 
+    // MARK: - Public API
+
+    public func load(item: MPMediaItem) async throws {
+        let title = item.title ?? "unknown"
+        log.info("load(item:) — title='\(title, privacy: .private)' hasAssetURL=\(item.assetURL != nil)")
+
+        await MainActor.run {
+            self.currentTitle = item.title
+            self.currentArtist = item.artist
+        }
+
+        if let url = item.assetURL {
+            try await loadFile(url: url, duration: item.playbackDuration)
+        } else {
+            try await loadSystemPlayer(item: item)
+        }
+    }
+
+    public func play() {
+        switch mode {
+        case .file:
+            guard audioFile != nil else {
+                log.warning("play() on .file mode with no audio file")
+                return
+            }
+            player.play()
+        case .system:
+            systemPlayer.play()
+        case .idle:
+            log.warning("play() in .idle mode")
+            return
+        }
+        DispatchQueue.main.async { self.isPlaying = true }
+        startPositionTimer()
+    }
+
+    public func pause() {
+        switch mode {
+        case .file: player.pause()
+        case .system: systemPlayer.pause()
+        case .idle: break
+        }
+        DispatchQueue.main.async { self.isPlaying = false }
+    }
+
+    public func stop() {
+        switch mode {
+        case .file: player.stop()
+        case .system: systemPlayer.stop()
+        case .idle: break
+        }
+        positionTimer?.invalidate()
+        positionTimer = nil
+        bpm.reset()
+        cleanupTempFile()
+        DispatchQueue.main.async {
+            self.isPlaying = false
+            self.positionSec = 0
+        }
+    }
+
+    // MARK: - File mode (owned tracks)
+
+    private func loadFile(url: URL, duration: TimeInterval) async throws {
+        // Teardown any system playback
+        systemPlayer.stop()
+
+        let localURL = try await ensureLocalFile(url: url)
         let file = try AVAudioFile(forReading: localURL)
         audioFile = file
         let sampleRate = file.processingFormat.sampleRate
-        let duration = Double(file.length) / sampleRate
-        log.info("Loaded \(localURL.lastPathComponent, privacy: .public) — \(Int(sampleRate))Hz, \(Int(duration))s")
+        let actualDuration = max(duration, Double(file.length) / sampleRate)
+        log.info("Loaded file \(localURL.lastPathComponent, privacy: .public) — \(Int(sampleRate))Hz, \(Int(actualDuration))s")
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback,
@@ -44,15 +146,7 @@ public final class AudioConductor: @unchecked Sendable {
         engine.disconnectNodeOutput(player)
         engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
 
-        if !tapInstalled {
-            let mixer = engine.mainMixerNode
-            mixer.installTap(onBus: 0,
-                             bufferSize: 1024,
-                             format: mixer.outputFormat(forBus: 0)) { [weak self] buf, time in
-                self?.handle(buffer: buf, time: time)
-            }
-            tapInstalled = true
-        }
+        try switchTap(to: .mixer)
 
         if !engine.isRunning {
             engine.prepare()
@@ -67,69 +161,169 @@ public final class AudioConductor: @unchecked Sendable {
         bpm.reset()
 
         await MainActor.run {
-            self.durationSec = duration
+            self.mode = .file
+            self.durationSec = actualDuration
             self.positionSec = 0
-            self.lastErrorMessage = nil
         }
     }
 
-    public func play() {
-        guard audioFile != nil else {
-            log.warning("play() called with no audio file loaded")
-            return
-        }
-        player.play()
-        DispatchQueue.main.async { self.isPlaying = true }
-        log.info("play() — engine running: \(self.engine.isRunning), player playing: \(self.player.isPlaying)")
-    }
+    // MARK: - System mode (DRM tracks: MPMusicPlayerController + mic)
 
-    public func pause() {
-        player.pause()
-        DispatchQueue.main.async { self.isPlaying = false }
-    }
-
-    public func stop() {
+    private func loadSystemPlayer(item: MPMediaItem) async throws {
+        // Stop file playback if any
         player.stop()
+
+        let granted = await requestMicAccess()
+        guard granted else {
+            throw NSError(
+                domain: "AudioConductor", code: -20,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Microphone access denied",
+                    NSLocalizedFailureReasonErrorKey:
+                        "DRM-protected tracks (Apple Music subscription downloads) need the microphone to react to what's playing on the speaker. Grant mic access in Settings → StudioJoe Music and try again."
+                ]
+            )
+        }
+
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord,
+                                mode: .default,
+                                options: [.defaultToSpeaker,
+                                          .allowBluetoothA2DP,
+                                          .mixWithOthers])
+        try session.setActive(true)
+
+        engine.disconnectNodeOutput(player)
+        try switchTap(to: .mic)
+
+        if !engine.isRunning {
+            engine.prepare()
+            try engine.start()
+            log.info("Engine started for mic tap, format: \(self.engine.inputNode.outputFormat(forBus: 0))")
+        }
+
+        systemPlayer.setQueue(with: MPMediaItemCollection(items: [item]))
         bpm.reset()
-        DispatchQueue.main.async {
-            self.isPlaying = false
+
+        await MainActor.run {
+            self.mode = .system
+            self.durationSec = item.playbackDuration
             self.positionSec = 0
         }
+        log.info("System queue set, mic tap active — play speakers to drive visualization")
     }
+
+    private func requestMicAccess() async -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .authorized: return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .audio)
+        case .denied, .restricted: return false
+        @unknown default: return false
+        }
+    }
+
+    @objc private func systemPlaybackStateChanged() {
+        let state = systemPlayer.playbackState
+        let playing = (state == .playing)
+        Task { @MainActor in self.isPlaying = playing }
+    }
+
+    @objc private func systemNowPlayingChanged() {
+        let item = systemPlayer.nowPlayingItem
+        Task { @MainActor in
+            self.currentTitle = item?.title
+            self.currentArtist = item?.artist
+            if let dur = item?.playbackDuration { self.durationSec = dur }
+        }
+    }
+
+    private func startPositionTimer() {
+        positionTimer?.invalidate()
+        positionTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let pos: Double
+            switch self.mode {
+            case .system:
+                pos = self.systemPlayer.currentPlaybackTime
+            case .file:
+                if let nodeTime = self.player.lastRenderTime,
+                   let p = self.player.playerTime(forNodeTime: nodeTime) {
+                    pos = Double(p.sampleTime) / p.sampleRate
+                } else {
+                    pos = self.positionSec
+                }
+            case .idle:
+                pos = 0
+            }
+            Task { @MainActor in self.positionSec = max(0, pos) }
+        }
+    }
+
+    // MARK: - Tap management
+
+    private func switchTap(to kind: TapKind) throws {
+        if activeTap == kind { return }
+        switch activeTap {
+        case .mixer: engine.mainMixerNode.removeTap(onBus: 0)
+        case .mic:   engine.inputNode.removeTap(onBus: 0)
+        case .none:  break
+        }
+        switch kind {
+        case .mixer:
+            let mixer = engine.mainMixerNode
+            mixer.installTap(onBus: 0, bufferSize: 1024,
+                             format: mixer.outputFormat(forBus: 0)) { [weak self] buf, time in
+                self?.handle(buffer: buf, time: time)
+            }
+        case .mic:
+            let input = engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buf, time in
+                self?.handle(buffer: buf, time: time)
+            }
+        case .none: break
+        }
+        activeTap = kind
+    }
+
+    // MARK: - Export helper (owned tracks whose URL is ipod-library://)
 
     private func ensureLocalFile(url: URL) async throws -> URL {
-        if url.isFileURL {
-            return url
-        }
+        if url.isFileURL { return url }
         log.info("Non-file URL scheme '\(url.scheme ?? "nil", privacy: .public)' — exporting to temp file")
 
         let asset = AVURLAsset(url: url)
-
         let tracks = try await asset.loadTracks(withMediaType: .audio)
         guard !tracks.isEmpty else {
             throw NSError(domain: "AudioConductor", code: -10,
                           userInfo: [NSLocalizedDescriptionKey: "Source has no audio tracks"])
         }
-
         guard let exporter = AVAssetExportSession(asset: asset,
-                                                   presetName: AVAssetExportPresetAppleM4A) else {
+                                                  presetName: AVAssetExportPresetAppleM4A) else {
             throw NSError(domain: "AudioConductor", code: -11,
                           userInfo: [NSLocalizedDescriptionKey: "Cannot create export session"])
         }
-
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("m4a")
-
         try await exporter.export(to: tmp, as: .m4a)
 
-        if let previous = exportedTempURL {
-            try? FileManager.default.removeItem(at: previous)
-        }
+        cleanupTempFile()
         exportedTempURL = tmp
         log.info("Exported to \(tmp.lastPathComponent, privacy: .public)")
         return tmp
     }
+
+    private func cleanupTempFile() {
+        if let previous = exportedTempURL {
+            try? FileManager.default.removeItem(at: previous)
+            exportedTempURL = nil
+        }
+    }
+
+    // MARK: - Tap callback
 
     private func handle(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
         guard var spec = fft.process(buffer) else { return }
@@ -137,17 +331,10 @@ public final class AudioConductor: @unchecked Sendable {
         let result = bpm.ingest(bass: spec.bands.bass, atHostTimeSec: hostSec)
         spec.bands.beatPulse = result.beatPulse
 
-        var pos: Double = 0
-        if let nodeTime = player.lastRenderTime,
-           let pTime = player.playerTime(forNodeTime: nodeTime) {
-            pos = max(0, Double(pTime.sampleTime) / pTime.sampleRate)
-        }
-
         DispatchQueue.main.async {
             self.spectrum = spec
             self.currentBPM = result.bpm
             self.isBeatDetected = result.isBeatNow
-            self.positionSec = pos
         }
     }
 }

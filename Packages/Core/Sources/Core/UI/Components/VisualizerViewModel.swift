@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import MediaPlayer
 import QuartzCore
 
 @MainActor
@@ -32,9 +33,9 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         displayLink?.invalidate()
     }
 
-    public func play(url: URL) async {
+    public func play(item: MPMediaItem) async {
         do {
-            try await conductor.load(url: url)
+            try await conductor.load(item: item)
             conductor.play()
             errorMessage = nil
         } catch {
@@ -67,6 +68,9 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     public var isPlaying: Bool { conductor.isPlaying }
     public var positionSec: Double { conductor.positionSec }
     public var durationSec: Double { conductor.durationSec }
+    public var mode: PlaybackMode { conductor.mode }
+    public var currentTitle: String? { conductor.currentTitle }
+    public var currentArtist: String? { conductor.currentArtist }
 
     private func startDisplayLoop() {
         let link = CADisplayLink(target: self, selector: #selector(tick(_:)))

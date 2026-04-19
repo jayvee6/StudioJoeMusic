@@ -2,23 +2,19 @@ import SwiftUI
 import MediaPlayer
 
 public struct MusicPickerView: UIViewControllerRepresentable {
-    public let onPick: (URL) -> Void
+    public let onPick: (MPMediaItem) -> Void
     public let onCancel: () -> Void
-    public let onDRMTrack: () -> Void
 
-    public init(onPick: @escaping (URL) -> Void,
-                onCancel: @escaping () -> Void,
-                onDRMTrack: @escaping () -> Void = {}) {
+    public init(onPick: @escaping (MPMediaItem) -> Void,
+                onCancel: @escaping () -> Void) {
         self.onPick = onPick
         self.onCancel = onCancel
-        self.onDRMTrack = onDRMTrack
     }
 
     public func makeUIViewController(context: Context) -> MPMediaPickerController {
         let picker = MPMediaPickerController(mediaTypes: .music)
         picker.allowsPickingMultipleItems = false
         picker.showsCloudItems = false
-        picker.prompt = "Only tracks you own (not DRM Apple Music downloads) will play through the visualizer."
         picker.delegate = context.coordinator
         return picker
     }
@@ -37,10 +33,7 @@ public struct MusicPickerView: UIViewControllerRepresentable {
             guard let item = collection.items.first else {
                 parent.onCancel(); return
             }
-            guard let url = item.assetURL else {
-                parent.onDRMTrack(); return
-            }
-            parent.onPick(url)
+            parent.onPick(item)
         }
 
         public func mediaPickerDidCancel(_ picker: MPMediaPickerController) {
