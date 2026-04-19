@@ -1,0 +1,57 @@
+name: StudioJoeMusic
+options:
+  bundleIdPrefix: dev.studiojoe
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED: YES
+
+packages:
+  Core:
+    path: Packages/Core
+
+targets:
+  StudioJoeMusic:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: StudioJoeMusic
+        excludes:
+          - "Info.plist"
+    dependencies:
+      - package: Core
+    info:
+      path: StudioJoeMusic/Info.plist
+      properties:
+        CFBundleDisplayName: StudioJoe Music
+        NSAppleMusicUsageDescription: "Pick a song from your library to play through the visualizer."
+        UILaunchScreen:
+          UIImageName: ""
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIUserInterfaceStyle: Dark
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.studiojoe.StudioJoeMusic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_EMIT_LOC_STRINGS: YES

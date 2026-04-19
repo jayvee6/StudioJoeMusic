@@ -28,39 +28,46 @@ Phase 1 scaffolds the **audio analysis pipeline** that survives the DRM gate: `A
 - The Xcode app target itself (manual step below).
 - Apple Music auth, Spotify auth, library browsers, full-track playback, analysis-source picker, iPod overlay, Metal renderer. These are Phases 2–6 of the plan.
 
-## Creating the Xcode app target
+## Generating the Xcode project
 
-The Swift package builds standalone via `swift build`, but to run the UI on a device or simulator you need an iOS app target hosting it. One-time setup:
+`project.yml` is the source of truth for the Xcode project. Regenerate it with:
 
-1. Open Xcode.
-2. **File → New → Project → iOS → App**.
-3. Product Name: `StudioJoeMusic` · Interface: **SwiftUI** · Language: **Swift** · Testing: on.
-4. Save location: `/Users/jdot/Documents/Development/StudioJoeMusic/` (creates `StudioJoeMusic.xcodeproj` next to `Packages/`).
-5. **File → Add Package Dependencies… → Add Local…** → select `Packages/Core`.
-6. In the app target's **Frameworks, Libraries, and Embedded Content**, add `Core`.
-7. **Info.plist additions** — see `Info.plist.additions.md`.
-8. Replace `StudioJoeMusicApp.swift` with:
+```sh
+cd ~/Documents/Development/StudioJoeMusic
+xcodegen generate
+```
 
-   ```swift
-   import SwiftUI
-   import Core
+That produces `StudioJoeMusic.xcodeproj` with:
 
-   @main
-   struct StudioJoeMusicApp: App {
-       @StateObject private var vm = VisualizerViewModel(conductor: AudioConductor())
+- App target `StudioJoeMusic` (bundle id `dev.studiojoe.StudioJoeMusic`, iOS 26 deployment)
+- Local SPM dependency on `Packages/Core`
+- Info.plist generated from `project.yml` (Media Library usage, dark scheme, portrait + landscape, light status bar)
+- `Assets.xcassets` with `AppIcon` and `AccentColor` (#0A84FF)
+- `StudioJoeMusicApp.swift` entry wires `VisualizerUI(viewModel:)` as the root scene and requests media library permission at launch
 
-       init() {
-           MediaLibraryPermission.request { _ in }
-       }
+The `.xcodeproj` is git-ignored; regenerate any time `project.yml` changes.
 
-       var body: some Scene {
-           WindowGroup {
-               VisualizerUI(viewModel: vm)
-           }
-       }
-   }
-   ```
-9. Select your device, **⌘R**. Grant media library access when prompted. Tap **Pick Song**, select a track you own (not a cloud Apple Music download), watch the bars and BPM circle react.
+## Running on device
+
+1. `xcodegen generate` (if you haven't already).
+2. `open StudioJoeMusic.xcodeproj`.
+3. In **Signing & Capabilities**, pick your development team once — Xcode remembers it.
+4. Select your iPhone, **⌘R**. Grant media library access when prompted.
+5. Tap **Pick Song** → choose a track you own (not a cloud Apple Music download) → bars and BPM circle react.
+
+## Headless build (for CI or sanity)
+
+```sh
+# Core package only (fast):
+cd Packages/Core
+xcodebuild -scheme Core -destination 'generic/platform=iOS Simulator' -sdk iphonesimulator build
+
+# Full app (after xcodegen):
+cd ~/Documents/Development/StudioJoeMusic
+xcodebuild -project StudioJoeMusic.xcodeproj -scheme StudioJoeMusic \
+  -destination 'generic/platform=iOS Simulator' -sdk iphonesimulator \
+  -configuration Debug build CODE_SIGNING_ALLOWED=NO
+```
 
 ## Smoke-test checklist
 

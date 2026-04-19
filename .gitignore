@@ -10,6 +10,9 @@ DerivedData/
 *.xcscmblueprint
 *.hmap
 
+## xcodegen: project file is generated from project.yml
+StudioJoeMusic.xcodeproj/
+
 ## Swift Package Manager
 .build/
 .swiftpm/
