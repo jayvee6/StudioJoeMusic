@@ -1,0 +1,29 @@
+## macOS
+.DS_Store
+
+## Xcode / Swift
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.hmap
+
+## Swift Package Manager
+.build/
+.swiftpm/
+Packages/*/Package.resolved
+Packages/*/.swiftpm/
+
+## Secrets
+.env
+.env.local
+*.p8
+*.p12
+*.pem
+
+## Editor
+.vscode/
+.idea/
+*.swp
