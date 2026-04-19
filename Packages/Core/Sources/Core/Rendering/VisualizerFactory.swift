@@ -78,6 +78,8 @@ public enum VisualizerFactory {
         case .emojiWaves:
             guard let atlas else { return nil }
             return try makeWaves(context: context, pixelFormat: pixelFormat, atlas: atlas)
+        case .ferrofluid:
+            return try FerroRenderer(context: context, pixelFormat: pixelFormat, spikeCount: 32)
         }
     }
 

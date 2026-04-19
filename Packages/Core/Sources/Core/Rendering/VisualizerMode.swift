@@ -9,6 +9,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
     case subwoofer
     case emojiVortex
     case emojiWaves
+    case ferrofluid
 
     public var id: Int { rawValue }
 
@@ -22,6 +23,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .subwoofer:   return "Sub"
         case .emojiVortex: return "Vortex"
         case .emojiWaves:  return "Waves"
+        case .ferrofluid:  return "Ferro"
         }
     }
 
@@ -35,6 +37,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .subwoofer:   return "hifispeaker.fill"
         case .emojiVortex: return "sparkles"
         case .emojiWaves:  return "wave.3.right"
+        case .ferrofluid:  return "waveform.path.ecg"
         }
     }
 

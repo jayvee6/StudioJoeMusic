@@ -73,7 +73,8 @@ public struct MetalVisualizerView: UIViewRepresentable {
                 mid: viewModel.mid,
                 treble: viewModel.treble,
                 beatPulse: viewModel.beatPulse,
-                bpm: Float(viewModel.currentBPM)
+                bpm: Float(viewModel.currentBPM),
+                magnitudes: viewModel.magnitudes
             )
             renderer.draw(in: view, audio: audio)
         }

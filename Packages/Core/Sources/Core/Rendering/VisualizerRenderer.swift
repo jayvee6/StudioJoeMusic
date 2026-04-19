@@ -9,15 +9,17 @@ public struct AudioFrame {
     public var treble: Float
     public var beatPulse: Float
     public var bpm: Float
+    public var magnitudes: [Float]   // per-bin, 0..1; length equals VM.binCount
 
     public init(time: Float, bass: Float, mid: Float, treble: Float,
-                beatPulse: Float, bpm: Float) {
+                beatPulse: Float, bpm: Float, magnitudes: [Float]) {
         self.time = time
         self.bass = bass
         self.mid = mid
         self.treble = treble
         self.beatPulse = beatPulse
         self.bpm = bpm
+        self.magnitudes = magnitudes
     }
 }
 
