@@ -75,10 +75,18 @@ public final class AudioConductor: @unchecked Sendable {
         }
 
         if let url = item.assetURL {
-            try await loadFile(url: url, duration: item.playbackDuration)
-        } else {
-            try await loadSystemPlayer(item: item)
+            do {
+                try await loadFile(url: url, duration: item.playbackDuration)
+                return
+            } catch {
+                // Some library assets (DRM-wrapped Apple Music downloads, protected iTunes
+                // purchases, etc.) return a non-nil assetURL but refuse to export / be
+                // read by AVAudioFile. Fall back to the system player + mic-tap path.
+                let ns = error as NSError
+                log.warning("loadFile failed (\(ns.domain)\(ns.code) — \(ns.localizedDescription, privacy: .public)); falling back to system player")
+            }
         }
+        try await loadSystemPlayer(item: item)
     }
 
     /// Load a remote / local audio URL directly — used for Spotify preview mp3 etc.
