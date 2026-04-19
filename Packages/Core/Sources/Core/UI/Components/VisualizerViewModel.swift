@@ -38,9 +38,24 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
             conductor.play()
             errorMessage = nil
         } catch {
-            errorMessage = "Playback failed: \(error.localizedDescription)"
-            print("[VisualizerViewModel] load error: \(error)")
+            errorMessage = Self.verboseMessage(for: error)
+            print("[VisualizerViewModel] load error: \(error as NSError)\n"
+                  + "userInfo: \((error as NSError).userInfo)")
         }
+    }
+
+    private static func verboseMessage(for error: Error) -> String {
+        let ns = error as NSError
+        var parts: [String] = ["\(ns.domain) (\(ns.code))"]
+        if let reason = ns.userInfo[NSLocalizedFailureReasonErrorKey] as? String {
+            parts.append(reason)
+        } else if !ns.localizedDescription.isEmpty {
+            parts.append(ns.localizedDescription)
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append("↳ \(underlying.domain)(\(underlying.code)): \(underlying.localizedDescription)")
+        }
+        return parts.joined(separator: "\n")
     }
 
     public func togglePlayPause() {
