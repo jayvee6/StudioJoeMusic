@@ -23,7 +23,7 @@ public struct VisualizerUI: View {
             MusicPickerView(
                 onPick: { url in
                     showPicker = false
-                    try? viewModel.play(url: url)
+                    Task { await viewModel.play(url: url) }
                 },
                 onCancel: { showPicker = false },
                 onDRMTrack: {
@@ -38,6 +38,13 @@ public struct VisualizerUI: View {
                message: {
                    Text("Apple Music subscription downloads are DRM-protected. Pick a track you own (iTunes purchase, imported, or iTunes Match).")
                })
+        .alert("Playback error",
+               isPresented: Binding(
+                   get: { viewModel.errorMessage != nil },
+                   set: { if !$0 { viewModel.errorMessage = nil } }
+               ),
+               actions: { Button("OK") {} },
+               message: { Text(viewModel.errorMessage ?? "") })
     }
 
     private var pulsingCircleCanvas: some View {

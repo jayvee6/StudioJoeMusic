@@ -11,6 +11,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     @Published public private(set) var beatPulse: Float = 0
     @Published public private(set) var currentBPM: Double = 0
     @Published public private(set) var isBeatDetected: Bool = false
+    @Published public var errorMessage: String?
 
     public let binCount: Int
     public var fallOffPerTick: Float = 0.04
@@ -31,9 +32,15 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         displayLink?.invalidate()
     }
 
-    public func play(url: URL) throws {
-        try conductor.load(url: url)
-        conductor.play()
+    public func play(url: URL) async {
+        do {
+            try await conductor.load(url: url)
+            conductor.play()
+            errorMessage = nil
+        } catch {
+            errorMessage = "Playback failed: \(error.localizedDescription)"
+            print("[VisualizerViewModel] load error: \(error)")
+        }
     }
 
     public func togglePlayPause() {
