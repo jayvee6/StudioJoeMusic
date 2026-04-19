@@ -60,6 +60,5 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
     float vign = smoothstep(1.05, 0.2, length(uv));
     color *= vign;
 
-    color = pow(max(color, float3(0.0)), float3(0.4545));
-    return float4(color, 1.0);
+    return float4(max(color, float3(0.0)), 1.0);
 }

@@ -50,6 +50,5 @@ fragment float4 hypno_fs(HVSOut in [[stage_in]],
     // Bass brightens
     color *= (0.75 + u.bass * 0.5);
 
-    color = pow(max(color, float3(0.0)), float3(0.4545));
-    return float4(color, 1.0);
+    return float4(max(color, float3(0.0)), 1.0);
 }

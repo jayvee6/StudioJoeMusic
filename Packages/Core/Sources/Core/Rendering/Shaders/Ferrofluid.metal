@@ -71,7 +71,5 @@ fragment float4 ferrofluid_fs(FerroVSOut in [[stage_in]],
     float3 color = body * alpha + poolColor * poolMask * (1.0 - alpha);
     float finalAlpha = max(alpha, poolMask * 0.9);
 
-    // Gamma
-    color = pow(max(color, float3(0.0)), float3(0.4545));
-    return float4(color * finalAlpha, finalAlpha);
+    return float4(max(color, float3(0.0)) * finalAlpha, finalAlpha);
 }

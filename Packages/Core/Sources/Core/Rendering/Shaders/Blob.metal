@@ -69,6 +69,5 @@ fragment float4 blob_fs(VSOut in [[stage_in]],
             (u.time * 0.04 + float3(0.0, 0.33, 0.67)));
         col = gCol * fog * 0.15 * (0.4 + u.audio);
     }
-    col = pow(max(col, float3(0.0)), float3(0.4545));
-    return float4(col, 1.0);
+    return float4(max(col, float3(0.0)), 1.0);
 }

@@ -151,15 +151,15 @@ public enum VisualizerFactory {
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "vortex_vs", fragmentFunction: "vortex_fs",
             atlas: atlas.texture,
-            instanceCount: 12 * 13,
+            instanceCount: 12 * 9,  // matches ARMS * STEPS in EmojiVortex.metal
             label: "EmojiVortex"
         ) { a, res in
             VortexUniforms(
                 time: a.time,
                 bass: a.bass,
                 treble: a.treble,
-                twist: 3.0 + a.bass * 4.0,
-                scale: 1.0 + a.bass * 0.18,
+                twist: 2.0 + a.bass * 3.0,
+                scale: 1.0 + a.bass * 0.10,
                 resolution: res,
                 atlasGrid: grid
             )

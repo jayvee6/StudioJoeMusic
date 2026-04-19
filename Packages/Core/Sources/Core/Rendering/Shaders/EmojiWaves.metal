@@ -26,9 +26,9 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
     int ring = int(iid) / PER_RING;
     int slot = int(iid) % PER_RING;
 
-    // Radius grows per ring; bass adds shimmer
-    float radius = (float(ring) + 1.0) * u.ringScale;
-    radius *= (1.0 + u.bass * 0.18);
+    // Radius grows per ring; skip the very center so 12 emojis fit around the inner ring.
+    float radius = (float(ring) + 2.0) * u.ringScale;
+    radius *= (1.0 + u.bass * 0.15);
 
     // Angle: evenly distributed, with per-ring spin offset
     float ringSpin = u.time * (0.15 + u.spin * 0.6) * (ring % 2 == 0 ? 1.0 : -1.0);
@@ -38,8 +38,8 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 
-    // Emoji size pulses with bass, shrinks at outer rings
-    float size_world = 0.06 * (1.0 - float(ring) * 0.05) * (1.0 + u.bass * 0.35);
+    // Emoji size pulses with bass, shrinks at outer rings.
+    float size_world = 0.044 * (1.0 - float(ring) * 0.06) * (1.0 + u.bass * 0.30);
     float size_x = size_world / aspect;
     float size_y = size_world;
 

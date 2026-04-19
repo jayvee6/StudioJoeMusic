@@ -18,7 +18,7 @@ struct VVSOut {
 };
 
 constant int ARMS = 12;
-constant int STEPS = 13;
+constant int STEPS = 9;
 
 vertex VVSOut vortex_vs(uint vid [[vertex_id]],
                         uint iid [[instance_id]],
@@ -26,8 +26,8 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     int arm = int(iid) / STEPS;
     int step = int(iid) % STEPS;
 
-    float pitch = 0.042 * u.scale;
-    float radius = float(step + 1) * pitch;
+    float pitch = 0.065 * u.scale;
+    float radius = float(step + 3) * pitch;   // start far enough out that 12 emojis fit
 
     float baseAngle = float(arm) * (2.0 * M_PI_F / float(ARMS));
     float swirl = u.time * 0.22 + u.bass * 1.2;
@@ -37,9 +37,9 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 
-    // Size: bigger at outer radius, slight treble modulation
-    float emojiSize_world = 0.045 + radius * 0.13;
-    emojiSize_world *= (1.0 + u.treble * 0.25);
+    // Emoji size: small core + mild growth with radius, slight treble pop.
+    float emojiSize_world = 0.028 + radius * 0.035;
+    emojiSize_world *= (1.0 + u.treble * 0.20);
     float emojiSize_x = emojiSize_world / aspect;
     float emojiSize_y = emojiSize_world;
 

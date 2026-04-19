@@ -66,8 +66,7 @@ fragment float4 subwoofer_fs(SubVSOut in [[stage_in]],
     }
 
     // Bass brightens everything slightly
-    color *= (0.85 + u.bass * 0.40);
+    color *= (0.85 + u.bass * 0.25);
 
-    color = pow(max(color, float3(0.0)), float3(0.4545));
-    return float4(color, 1.0);
+    return float4(max(color, float3(0.0)), 1.0);
 }
