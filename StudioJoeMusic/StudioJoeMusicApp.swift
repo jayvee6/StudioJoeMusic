@@ -3,9 +3,17 @@ import Core
 
 @main
 struct StudioJoeMusicApp: App {
-    @StateObject private var viewModel = VisualizerViewModel(conductor: AudioConductor())
+    @StateObject private var viewModel: VisualizerViewModel
 
     init() {
+        let spotifyAuth = SpotifyAuth()
+        let catalog = SpotifyCatalog(auth: spotifyAuth)
+        let metadata = TrackMetadataService(spotifyCatalog: catalog)
+        let vm = VisualizerViewModel(
+            conductor: AudioConductor(),
+            metadataService: metadata
+        )
+        _viewModel = StateObject(wrappedValue: vm)
         MediaLibraryPermission.request { _ in }
     }
 

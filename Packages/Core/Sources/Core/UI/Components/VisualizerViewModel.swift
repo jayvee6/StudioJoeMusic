@@ -12,6 +12,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     @Published public private(set) var beatPulse: Float = 0
     @Published public private(set) var currentBPM: Double = 0
     @Published public private(set) var isBeatDetected: Bool = false
+    @Published public private(set) var metadataFeatures: TrackFeatures = TrackFeatures()
     @Published public var errorMessage: String?
 
     public let binCount: Int
@@ -20,24 +21,48 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
 
     private let conductor: AudioConductor
     private var displayLink: CADisplayLink?
+    private var metadataService: TrackMetadataService?
+    private var metadataTask: Task<Void, Never>?
 
-    public init(conductor: AudioConductor, binCount: Int = 32) {
+    public init(conductor: AudioConductor,
+                binCount: Int = 32,
+                metadataService: TrackMetadataService? = nil) {
         self.conductor = conductor
         self.binCount = binCount
         self.magnitudes = Array(repeating: 0, count: binCount)
+        self.metadataService = metadataService
         super.init()
         startDisplayLoop()
     }
 
+    /// Best-available BPM: real-time onset detection wins once it stabilizes; metadata fallback otherwise.
+    public var effectiveBPM: Double {
+        if currentBPM > 0 { return currentBPM }
+        return metadataFeatures.tempoBPM ?? 0
+    }
+
+    public var bpmSourceLabel: String {
+        if currentBPM > 0 { return "live" }
+        if metadataFeatures.tempoBPM != nil { return "metadata" }
+        return "—"
+    }
+
     deinit {
         displayLink?.invalidate()
+        metadataTask?.cancel()
     }
 
     public func play(item: MPMediaItem) async {
+        let source: TrackSource = item.beatsPerMinute > 0
+            ? .appleWithBPM(Double(item.beatsPerMinute))
+            : .appleUnknown
+        resetMetadata()
+
         do {
             try await conductor.load(item: item)
             conductor.play()
             errorMessage = nil
+            fetchMetadata(for: source)
         } catch {
             errorMessage = Self.verboseMessage(for: error)
             print("[VisualizerViewModel] load error: \(error as NSError)\n"
@@ -45,7 +70,12 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         }
     }
 
-    public func play(remoteURL: URL, title: String?, artist: String?, durationSec: TimeInterval = 0) async {
+    public func play(remoteURL: URL,
+                     title: String?,
+                     artist: String?,
+                     durationSec: TimeInterval = 0,
+                     source: TrackSource = .unknown) async {
+        resetMetadata()
         do {
             try await conductor.load(remoteURL: remoteURL,
                                      title: title,
@@ -53,9 +83,28 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                                      durationSec: durationSec)
             conductor.play()
             errorMessage = nil
+            fetchMetadata(for: source)
         } catch {
             errorMessage = Self.verboseMessage(for: error)
             print("[VisualizerViewModel] remote load error: \(error as NSError)")
+        }
+    }
+
+    private func resetMetadata() {
+        metadataTask?.cancel()
+        metadataTask = nil
+        metadataFeatures = TrackFeatures()
+    }
+
+    private func fetchMetadata(for source: TrackSource) {
+        guard let service = metadataService, source != .unknown else { return }
+        metadataTask = Task { [weak self] in
+            guard let self else { return }
+            let features = await service.features(for: source)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                self.metadataFeatures = features
+            }
         }
     }
 

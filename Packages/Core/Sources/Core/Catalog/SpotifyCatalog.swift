@@ -67,6 +67,27 @@ public actor SpotifyCatalog {
         return result.tracks.items
     }
 
+    public func audioFeatures(trackID: String) async throws -> TrackFeatures {
+        struct AudioFeaturesPayload: Decodable {
+            let tempo: Double?
+            let energy: Double?
+            let valence: Double?
+            let danceability: Double?
+            let key: Int?
+            let time_signature: Int?
+        }
+        let url = URL(string: "https://api.spotify.com/v1/audio-features/\(trackID)")!
+        let raw: AudioFeaturesPayload = try await getJSON(url: url)
+        return TrackFeatures(
+            tempoBPM: raw.tempo,
+            energy: raw.energy,
+            valence: raw.valence,
+            danceability: raw.danceability,
+            key: raw.key,
+            timeSignature: raw.time_signature
+        )
+    }
+
     // MARK: - HTTP helper
 
     private func getJSON<T: Decodable>(url: URL) async throws -> T {

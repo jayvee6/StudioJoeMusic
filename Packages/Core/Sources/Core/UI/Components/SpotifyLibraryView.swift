@@ -222,7 +222,8 @@ public struct SpotifyLibraryView: View {
                 remoteURL: url,
                 title: track.name,
                 artist: track.primaryArtist,
-                durationSec: Double(track.duration_ms) / 1000.0
+                durationSec: Double(track.duration_ms) / 1000.0,
+                source: .spotify(id: track.id)
             )
             onDismiss()
         }

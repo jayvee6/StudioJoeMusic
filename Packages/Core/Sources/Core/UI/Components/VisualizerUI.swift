@@ -123,11 +123,16 @@ public struct VisualizerUI: View {
         VStack {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(viewModel.currentBPM > 0
-                         ? "\(Int(viewModel.currentBPM)) BPM"
-                         : "— BPM")
-                        .font(.system(.title3, design: .rounded, weight: .semibold))
-                        .foregroundStyle(StudioJoeColors.label1)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(viewModel.effectiveBPM > 0
+                             ? "\(Int(viewModel.effectiveBPM)) BPM"
+                             : "— BPM")
+                            .font(.system(.title3, design: .rounded, weight: .semibold))
+                            .foregroundStyle(StudioJoeColors.label1)
+                        Text(viewModel.bpmSourceLabel)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(StudioJoeColors.label3)
+                    }
                     Text(String(format: "bass %.2f · mid %.2f · treble %.2f",
                                 viewModel.bass, viewModel.mid, viewModel.treble))
                         .font(.system(.caption, design: .monospaced))
