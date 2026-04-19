@@ -47,6 +47,12 @@ public struct MetalVisualizerView: UIViewRepresentable {
         private let startTime = CACurrentMediaTime()
         private var emojiAtlas: EmojiAtlas?
 
+        // Rolling bass history — newest at [0], oldest at [15]. Matches web prototype's
+        // `bassHistory.unshift(newBass); bassHistory.pop()` convention so shaders can
+        // index-by-delay for outward-traveling wave effects.
+        private var bassRing: [Float] = Array(repeating: 0, count: 16)
+        private var bassHead: Int = 0
+
         init(viewModel: VisualizerViewModel, initialMode: VisualizerMode) {
             self.viewModel = viewModel
             self.currentMode = initialMode
@@ -67,6 +73,14 @@ public struct MetalVisualizerView: UIViewRepresentable {
         public func draw(in view: MTKView) {
             guard let renderer = renderer(for: currentMode) else { return }
 
+            // Advance the bass history ring (newest goes to head, then read back in order).
+            bassRing[bassHead] = viewModel.bass
+            bassHead = (bassHead + 1) % bassRing.count
+            var history = [Float](repeating: 0, count: bassRing.count)
+            for i in 0..<bassRing.count {
+                history[i] = bassRing[(bassHead + bassRing.count - 1 - i) % bassRing.count]
+            }
+
             let audio = AudioFrame(
                 time: Float(CACurrentMediaTime() - startTime),
                 bass: viewModel.bass,
@@ -74,7 +88,8 @@ public struct MetalVisualizerView: UIViewRepresentable {
                 treble: viewModel.treble,
                 beatPulse: viewModel.beatPulse,
                 bpm: Float(viewModel.currentBPM),
-                magnitudes: viewModel.magnitudes
+                magnitudes: viewModel.magnitudes,
+                bassHistory: history
             )
             renderer.draw(in: view, audio: audio)
         }

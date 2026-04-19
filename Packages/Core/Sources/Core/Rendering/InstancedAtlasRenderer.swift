@@ -65,6 +65,12 @@ public final class InstancedAtlasRenderer<U>: VisualizerRenderer {
                 enc.setFragmentBytes(base, length: bytes.count, index: 0)
             }
         }
+        audio.bassHistory.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                enc.setVertexBytes(base, length: raw.count, index: 1)
+                enc.setFragmentBytes(base, length: raw.count, index: 1)
+            }
+        }
 
         enc.drawPrimitives(type: .triangleStrip,
                            vertexStart: 0,

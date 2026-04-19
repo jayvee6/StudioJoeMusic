@@ -9,10 +9,17 @@ public struct AudioFrame {
     public var treble: Float
     public var beatPulse: Float
     public var bpm: Float
-    public var magnitudes: [Float]   // per-bin, 0..1; length equals VM.binCount
+    public var magnitudes: [Float]     // per-bin, 0..1; length equals VM.binCount
+    public var bassHistory: [Float]    // length 16; [0] = newest, [15] = oldest
 
-    public init(time: Float, bass: Float, mid: Float, treble: Float,
-                beatPulse: Float, bpm: Float, magnitudes: [Float]) {
+    public init(time: Float,
+                bass: Float,
+                mid: Float,
+                treble: Float,
+                beatPulse: Float,
+                bpm: Float,
+                magnitudes: [Float],
+                bassHistory: [Float]) {
         self.time = time
         self.bass = bass
         self.mid = mid
@@ -20,8 +27,11 @@ public struct AudioFrame {
         self.beatPulse = beatPulse
         self.bpm = bpm
         self.magnitudes = magnitudes
+        self.bassHistory = bassHistory
     }
 }
+
+public let bassHistoryLength: Int = 16
 
 @MainActor
 public protocol VisualizerRenderer: AnyObject {
@@ -74,6 +84,11 @@ public final class FragmentVisualizerRenderer<U>: VisualizerRenderer {
         withUnsafeBytes(of: &u) { bytes in
             if let base = bytes.baseAddress {
                 enc.setFragmentBytes(base, length: bytes.count, index: 0)
+            }
+        }
+        audio.bassHistory.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                enc.setFragmentBytes(base, length: raw.count, index: 1)
             }
         }
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
