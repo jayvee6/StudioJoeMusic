@@ -30,7 +30,9 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     float radius = float(step + 3) * pitch;   // start far enough out that 12 emojis fit
 
     float baseAngle = float(arm) * (2.0 * M_PI_F / float(ARMS));
-    float swirl = u.time * 0.22 + u.bass * 1.2;
+    // Constant-rate swirl — driving speed from a pulsing signal creates jitter because
+    // `u.time * (speed with bass)` jumps whenever bass changes.
+    float swirl = u.time * 0.22;
     float angle = baseAngle + radius * u.twist + swirl;
 
     float aspect = u.resolution.x / u.resolution.y;

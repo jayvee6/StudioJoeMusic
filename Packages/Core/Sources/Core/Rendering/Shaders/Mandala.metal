@@ -44,13 +44,16 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
     for (int i = 0; i < ringCount; i++) {
         int sides = (i % 2 == 0) ? 6 : 3;
         float ringScale = 0.10 + float(i) * 0.085 + u.bass * 0.035;
+        // Constant-rate rotation per ring. Driving angle from pulsing treble caused
+        // visible jitter because treble spikes * constant adds abrupt radians.
         float ringAngle = u.time * 0.22 * (1.0 - float(i) * 0.12)
-                          + u.treble * 1.6 * (1.0 + float(i) * 0.05);
+                          * (i % 2 == 0 ? 1.0 : -1.0);  // alternate direction by ring
         float2 rotated = rot2(uv, ringAngle);
 
         float d = sdPolygon(rotated, sides, ringScale);
         float edge = smoothstep(0.0045, 0.0, abs(d));
 
+        // Treble shifts hue instead of rotation — color pulse without geometric jitter.
         float hue = u.time * 0.04 + float(i) * 0.17 + u.treble * 0.35;
         float3 base = 0.5 + 0.5 * cos(6.28318 * (hue + float3(0.0, 0.33, 0.67)));
         color += base * edge * (0.45 + u.bass * 0.55);

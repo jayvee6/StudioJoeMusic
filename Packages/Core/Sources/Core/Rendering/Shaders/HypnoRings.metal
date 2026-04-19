@@ -26,7 +26,9 @@ fragment float4 hypno_fs(HVSOut in [[stage_in]],
     float2 uv = (in.uv - 0.5) * float2(u.resolution.x / u.resolution.y, 1.0);
     float r = length(uv);
 
-    float speed = 0.18 + u.bass * 0.35;
+    // Constant-rate offset. Coupling speed to bass caused visible jumps whenever bass
+    // spiked, because `u.time * speed` is not an integral.
+    float speed = 0.22;
     float spacing = 0.055;
     float bigOffset = u.time * speed;
 

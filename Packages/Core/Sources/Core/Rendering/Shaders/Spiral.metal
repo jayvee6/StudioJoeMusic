@@ -30,7 +30,9 @@ fragment float4 spiral_fs(SVSOut in [[stage_in]],
     float pitch = 0.10;
     float armCount = 2.0;
     float armSpacing = pitch / armCount;    // 0.05
-    float speed = 0.22 + u.bass * 0.45;
+    // Constant-rate offset. Bass drives stroke width + brightness, not speed, so the
+    // spiral doesn't jump backward on every beat.
+    float speed = 0.18;
     float offset = u.time * speed;
 
     // Phase distance to nearest arm of the 2-arm Archimedean spiral.
