@@ -41,8 +41,9 @@ public struct VortexUniforms {
     public var time: Float = 0
     public var bass: Float = 0
     public var treble: Float = 0
-    public var twist: Float = 18
+    public var twist: Float = 2.0
     public var scale: Float = 1.0
+    public var rippleAmp: Float = 0.08
     public var resolution: SIMD2<Float> = .zero
     public var atlasGrid: SIMD2<Float> = .init(4, 3)
 }
@@ -151,15 +152,16 @@ public enum VisualizerFactory {
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "vortex_vs", fragmentFunction: "vortex_fs",
             atlas: atlas.texture,
-            instanceCount: 12 * 9,  // matches ARMS * STEPS in EmojiVortex.metal
+            instanceCount: 12 * 13,  // matches ARMS * STEPS in EmojiVortex.metal
             label: "EmojiVortex"
         ) { a, res in
             VortexUniforms(
                 time: a.time,
                 bass: a.bass,
                 treble: a.treble,
-                twist: 2.0 + a.bass * 3.0,
-                scale: 1.0 + a.bass * 0.10,
+                twist: 1.8 + a.bass * 2.0,
+                scale: 1.0 + a.bass * 0.08,
+                rippleAmp: 0.065,
                 resolution: res,
                 atlasGrid: grid
             )
