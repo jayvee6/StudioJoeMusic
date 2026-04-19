@@ -176,7 +176,7 @@ public enum VisualizerFactory {
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "waves_vs", fragmentFunction: "waves_fs",
             atlas: atlas.texture,
-            instanceCount: 6 * 12,
+            instanceCount: 91,  // 1 + 6 + 12 + 18 + 24 + 30 (matches cum[] in shader)
             label: "EmojiWaves"
         ) { a, res in
             WavesUniforms(
