@@ -6,30 +6,28 @@ public struct FerroUniforms {
     public var time: Float = 0
     public var bass: Float = 0
     public var treble: Float = 0
-    public var spikeCount: Int32 = 32
+    public var spikeCount: Int32 = 48
     public var resolution: SIMD2<Float> = .zero
 }
 
 @MainActor
 public final class FerroRenderer: VisualizerRenderer {
+    public let spikeCount: Int = 48
+
     private let context: MetalContext
     private let pipeline: MTLRenderPipelineState
-    public let spikeCount: Int
-
     private var heights: [Float]
     private var velocities: [Float]
     private var lastTime: Float = 0
 
-    // Tunables
-    public var stiffness: Float = 38.0
-    public var damping: Float = 0.86
-    public var maxDt: Float = 1.0 / 30.0
+    // Matches web spec: k = stiffness * (0.12 + bass * 2.8); damp = 0.60 - bass * 0.46.
+    public var stiffness: Float = 0.95
+    public var damping: Float = 0.60
+    public var maxDt: Float = 1.0 / 24.0
 
     public init(context: MetalContext,
-                pixelFormat: MTLPixelFormat,
-                spikeCount: Int = 32) throws {
+                pixelFormat: MTLPixelFormat) throws {
         self.context = context
-        self.spikeCount = spikeCount
         self.heights = Array(repeating: 0, count: spikeCount)
         self.velocities = Array(repeating: 0, count: spikeCount)
 
@@ -52,20 +50,40 @@ public final class FerroRenderer: VisualizerRenderer {
     }
 
     public func draw(in view: MTKView, audio: AudioFrame) {
-        // Integrate spring dynamics — targets come from FFT magnitudes
         let dt = min(maxDt, max(0.001, audio.time - lastTime))
         lastTime = audio.time
+        let normDt = min(2.5, dt * 60.0)   // normalize spring step to 60fps equivalent
 
-        let bassBoost: Float = 1.0 + audio.bass * 0.6
-        let k: Float = stiffness * bassBoost
-        let d: Float = damping
+        // Map our 32-bin FFT magnitudes onto 48 spike targets (linear interpolation).
+        // Our magnitudes are already log-weighted at FFT time (quadratic bin mapping),
+        // so linear oversampling here is enough to spread them across 48 spikes.
+        var targets = [Float](repeating: 0, count: spikeCount)
+        let src = audio.magnitudes
+        if src.count >= 2 {
+            let srcMax = src.count - 1
+            for i in 0..<spikeCount {
+                let f = Float(i) / Float(spikeCount - 1) * Float(srcMax)
+                let lo = min(srcMax, Int(f))
+                let hi = min(srcMax, lo + 1)
+                let t = f - Float(lo)
+                targets[i] = src[lo] * (1 - t) + src[hi] * t
+            }
+        }
 
-        let targets = audio.magnitudes
+        // Idle shimmer so the pool isn't frozen between tracks.
+        let now = audio.time
         for i in 0..<spikeCount {
-            let t = i < targets.count ? targets[i] : 0
-            let force = (t - heights[i]) * k
-            velocities[i] = velocities[i] * d + force * dt
-            heights[i] = max(0.0, heights[i] + velocities[i] * dt)
+            let idle: Float = 0.04 * (0.4 + 0.6 * sin(now * 0.7 + Float(i) * 0.52))
+            targets[i] = max(targets[i], idle)
+        }
+
+        // Spring / damper per web spec. Velocity integration dt-scaled.
+        let k = stiffness * (0.12 + audio.bass * 2.8)
+        let damp = max(0.04, damping - audio.bass * 0.46)
+        for i in 0..<spikeCount {
+            let force = (targets[i] - heights[i]) * k
+            velocities[i] = velocities[i] * (1.0 - damp * normDt) + force * normDt
+            heights[i] = max(0.0, heights[i] + velocities[i] * normDt)
         }
 
         let ds = view.drawableSize
@@ -93,9 +111,7 @@ public final class FerroRenderer: VisualizerRenderer {
         }
         heights.withUnsafeBytes { raw in
             if let base = raw.baseAddress {
-                enc.setFragmentBytes(base,
-                                     length: raw.count,
-                                     index: 1)
+                enc.setFragmentBytes(base, length: raw.count, index: 1)
             }
         }
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
