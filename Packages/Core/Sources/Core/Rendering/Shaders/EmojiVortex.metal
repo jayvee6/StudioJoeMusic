@@ -2,10 +2,10 @@
 using namespace metal;
 
 struct VortexUniforms {
-    float time;
+    float tunnelRot;       // CPU-accumulated from (0.004 + mid*0.008)/frame
     float bass;
     float treble;
-    float twist;           // radians per unit radius (web's phylloSpread * 0.00025 analog)
+    float twist;           // radians per unit radius
     float scale;           // overall radial zoom
     float rippleAmp;       // how far bass-history ripple displaces each step
     float2 resolution;
@@ -29,37 +29,34 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     int arm = int(iid) / STEPS;
     int step = int(iid) % STEPS;
 
-    // Step normalized 0..~1 for size/alpha ramps (skip the exact centre).
-    float t = float(step + 1) / float(STEPS + 1);
-
-    // Base radial position: minR inner, maxR outer, mapped linearly by t.
+    // Step normalized to [~0, 1). Web: t = step / 12; radius = minR + (maxR-minR) * t.
+    // minR = shortSide * 0.08, maxR = diagonal * 0.82. On a portrait iPhone, shortSide is W
+    // and diagonal ~= sqrt(W^2 + H^2) ≈ 2.2W, so in short-side units: minR ≈ 0.08, maxR ≈ 0.82.
+    float t = float(step) / float(STEPS - 1);
     float minR = 0.10 * u.scale;
     float maxR = 0.82 * u.scale;
     float baseRadius = mix(minR, maxR, t);
 
-    // Bass-history ripple — each step lags one frame behind the inner one,
-    // producing the signature outward-traveling wave. Matches web's
-    // bassHistory[step * rippleStepSize] with rippleStepSize=1.
+    // Bass-history ripple — each step lags one frame behind the inner one.
     int historyIdx = clamp(step, 0, 15);
     float delayedBass = bassHistory[historyIdx];
     float radius = baseRadius + delayedBass * u.rippleAmp;
 
-    // Phyllotaxis: each arm starts at baseAngle and twists with r.
+    // Phyllotaxis arm layout + CPU-integrated tunnel rotation.
     float baseAngle = float(arm) * (2.0 * M_PI_F / float(ARMS));
-    float swirl = u.time * 0.24;                 // constant-rate tunnel rotation
-    float angle = baseAngle + radius * u.twist + swirl;
+    float angle = baseAngle + radius * u.twist + u.tunnelRot;
 
     float aspect = u.resolution.x / u.resolution.y;
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 
-    // Emoji size: grows outward, plus strong treble flash (web's 1 + treble*1.2).
-    float size_world = 0.028 + t * 0.08;
-    size_world *= (1.0 + u.treble * 1.0);
+    // Web: emoji size = shortSide * (0.03 + t * 0.11) * (1 + treble * 1.2).
+    float size_world = 0.030 + t * 0.11;
+    size_world *= (1.0 + u.treble * 1.2);
     float size_x = size_world / aspect;
     float size_y = size_world;
 
-    // Alpha ramp: inner dimmer, outer brighter — matches web's 0.35 + t*0.65.
+    // Alpha ramp — inner dimmer, outer brighter.
     float alpha = 0.35 + t * 0.65;
 
     float cx = (vid & 1u) == 0u ? -1.0 : 1.0;
@@ -90,7 +87,6 @@ fragment float4 vortex_fs(VVSOut in [[stage_in]],
 
     constexpr sampler s(coord::normalized, filter::linear, address::clamp_to_edge);
     float4 color = atlas.sample(s, atlasUV);
-    // Premultiplied alpha so blend math stays correct.
     color.rgb *= in.alpha;
     color.a   *= in.alpha;
     return color;

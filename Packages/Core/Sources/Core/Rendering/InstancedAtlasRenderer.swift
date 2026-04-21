@@ -2,15 +2,17 @@ import Metal
 import MetalKit
 import simd
 
-/// Instanced quads sampling a shared atlas texture. Used for emoji visualizers (Vortex, Waves).
-/// Uniforms `U` must be layout-compatible with the Metal struct at buffer(0) for both stages.
+/// Instanced quads sampling a shared atlas texture. State is carried across frames so
+/// integrators like `tunnelRot` / `waveSpin` evolve smoothly regardless of audio pulses.
 @MainActor
-public final class InstancedAtlasRenderer<U>: VisualizerRenderer {
+public final class InstancedAtlasRenderer<U, State>: VisualizerRenderer {
     private let context: MetalContext
     private let pipeline: MTLRenderPipelineState
     private let atlas: MTLTexture
     private let instanceCount: Int
-    private let toUniforms: (AudioFrame, SIMD2<Float>) -> U
+    private var state: State
+    private let step: (inout State, AudioFrame, Float, SIMD2<Float>) -> U
+    private var lastTime: Float = -1
 
     public init(context: MetalContext,
                 pixelFormat: MTLPixelFormat,
@@ -19,11 +21,13 @@ public final class InstancedAtlasRenderer<U>: VisualizerRenderer {
                 atlas: MTLTexture,
                 instanceCount: Int,
                 label: String,
-                toUniforms: @escaping (AudioFrame, SIMD2<Float>) -> U) throws {
+                initialState: State,
+                step: @escaping (inout State, AudioFrame, Float, SIMD2<Float>) -> U) throws {
         self.context = context
         self.atlas = atlas
         self.instanceCount = instanceCount
-        self.toUniforms = toUniforms
+        self.state = initialState
+        self.step = step
 
         guard let vertex = context.library.makeFunction(name: vertexFunction),
               let fragment = context.library.makeFunction(name: fragmentFunction) else {
@@ -44,9 +48,14 @@ public final class InstancedAtlasRenderer<U>: VisualizerRenderer {
     }
 
     public func draw(in view: MTKView, audio: AudioFrame) {
+        let dt: Float = lastTime < 0
+            ? 1.0 / 60.0
+            : min(0.1, max(0.001, audio.time - lastTime))
+        lastTime = audio.time
+
         let ds = view.drawableSize
         let res = SIMD2<Float>(Float(ds.width), Float(ds.height))
-        var u = toUniforms(audio, res)
+        var u = step(&state, audio, dt, res)
 
         guard let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor,

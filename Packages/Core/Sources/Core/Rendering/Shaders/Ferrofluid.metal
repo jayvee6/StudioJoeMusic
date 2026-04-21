@@ -3,6 +3,7 @@ using namespace metal;
 
 struct FerroUniforms {
     float time;
+    float hue;            // 0..1, CPU-accumulated fluidHue
     float bass;
     float treble;
     int spikeCount;
@@ -22,7 +23,14 @@ vertex FerroVSOut ferrofluid_vs(uint vid [[vertex_id]]) {
     return o;
 }
 
-// Polynomial tent falloff. Peaks at 1 when |x|<=0 and falls to 0 at |x|=1.
+static float3 hsl2rgb(float h, float s, float l) {
+    float3 rgb = clamp(
+        abs(fmod(h * 6.0 + float3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0,
+        0.0, 1.0);
+    float c = (1.0 - abs(2.0 * l - 1.0)) * s;
+    return l + c * (rgb - 0.5);
+}
+
 static float tent(float x) {
     float a = max(0.0, 1.0 - abs(x));
     return a * a * a;
@@ -35,13 +43,10 @@ fragment float4 ferrofluid_fs(FerroVSOut in [[stage_in]],
     int N = u.spikeCount;
     float Nf = float(N);
 
-    // Spike index space at this x column.
     float spikeX = uv.x * (Nf - 1.0);
     int iCenter = clamp(int(spikeX), 0, N - 1);
 
-    // Compute the fluid surface height by taking the MAX influence from a window of
-    // neighbor spikes (tent falloff), then floor it with a "connected body" raised
-    // valley so the fluid stays a single mass. Matches web's cubic-bezier surface.
+    // Fluid surface — max-of-tent influence window + raised valley.
     float surface = 0.0;
     for (int dx = -2; dx <= 2; dx++) {
         int idx = clamp(iCenter + dx, 0, N - 1);
@@ -50,56 +55,48 @@ fragment float4 ferrofluid_fs(FerroVSOut in [[stage_in]],
     }
     int iL = clamp(iCenter, 0, N - 1);
     int iR = clamp(iCenter + 1, 0, N - 1);
-    float valley = (heights[iL] + heights[iR]) * 0.30;   // web spec: 30% raise
+    float valley = (heights[iL] + heights[iR]) * 0.30;
     surface = max(surface, valley);
 
-    // Map logical surface height (0..~1) to screen uv.y.
     float poolY = 0.04;
     float maxH = 0.55;
     float surfaceY = poolY + surface * maxH;
-
     float pixelY = uv.y;
-
-    // Hue drifts slowly, snaps up on bass kicks. Matches web's fluidHue += 0.06 + bass*1.8.
-    float hue = u.time * 0.03 + u.bass * 0.30;
-    float3 baseHue = 0.5 + 0.5 * cos(6.28318 * (hue + float3(0.0, 0.33, 0.67)));
-    float lum = dot(baseHue, float3(0.299, 0.587, 0.114));
-    float3 desat = float3(lum);
 
     float4 outCol = float4(0.0);
 
     if (pixelY < poolY) {
-        // Pool: dark base with colored bass glow.
-        float t = pixelY / poolY;                         // 0 bottom, 1 top of pool
+        // Pool: HSL(hue, 100%, 22-36%) blended with very dark.
+        float t = pixelY / poolY;
         float3 poolDark = float3(0.015, 0.018, 0.025);
-        float3 poolGlow = mix(desat, baseHue, 0.6) * (0.10 + u.bass * 0.35);
-        float3 pool = poolDark + poolGlow * (0.4 + t * 0.6);
+        float3 poolGlow = hsl2rgb(u.hue, 1.0, 0.22 + u.bass * 0.14);
+        float3 pool = poolDark + poolGlow * (0.40 + u.bass * 0.55) * (0.4 + t * 0.6);
         outCol = float4(pool, 1.0);
     } else if (pixelY < surfaceY) {
-        // Fluid body — dark metallic gradient, vertical lightening toward the tip.
-        float tNorm = (pixelY - poolY) / max(surfaceY - poolY, 0.001);   // 0 pool, 1 tip
-        float3 bodyLow  = float3(0.025, 0.028, 0.036);
-        float3 bodyMid  = mix(desat * 0.22, baseHue * 0.18, 0.6);
-        float3 bodyHigh = mix(desat * 0.58, baseHue * 0.50, 0.45);
+        // Body: HSL(hue, 20-25%, 3-10%) vertical gradient — dark metallic with
+        // barely-there colored tint.
+        float tNorm = (pixelY - poolY) / max(surfaceY - poolY, 0.001);
+        float3 bodyLow  = hsl2rgb(u.hue, 0.20, 0.03);
+        float3 bodyMid  = hsl2rgb(u.hue, 0.22, 0.07);
+        float3 bodyHigh = hsl2rgb(u.hue, 0.25, 0.10);
         float3 body = mix(bodyLow, bodyMid, smoothstep(0.0, 0.55, tNorm));
         body = mix(body, bodyHigh, smoothstep(0.55, 1.0, tNorm));
 
-        // Specular streak on the "left face" of the nearest spike. Strongest on
-        // the upper half of each spike, drops off rapidly as spikeX passes spike center.
-        float phase = spikeX - floor(spikeX);        // 0..1 within column
+        // Specular streak on left face, colored per web: HSL(hue, 60-80%, 42-88%).
+        float phase = spikeX - floor(spikeX);
         float leftFace = smoothstep(0.45, 0.05, phase);
         float upperHalf = smoothstep(0.40, 0.92, tNorm);
         float specAmount = leftFace * upperHalf * (0.55 + u.bass * 0.35);
-        float3 specColor = mix(desat, baseHue, 0.45) * 0.90;
+        float specL = 0.50 + u.bass * 0.30;
+        float3 specColor = hsl2rgb(u.hue, 0.65, specL);
         body = mix(body, specColor, specAmount);
 
-        // Pool shimmer line at the surface exactly at poolY — matches web's shimmer.
+        // Pool shimmer line at y=poolY.
         float shimmer = smoothstep(0.02, 0.0, abs(pixelY - poolY));
-        body += baseHue * shimmer * (0.18 + u.bass * 0.30);
+        body += hsl2rgb(u.hue, 1.0, 0.30 + u.bass * 0.38) * shimmer;
 
         outCol = float4(body, 1.0);
     } else {
-        // Above the fluid — transparent so the background shows through.
         outCol = float4(0.0);
     }
 

@@ -10,21 +10,24 @@ public struct BlobUniforms {
 }
 
 public struct MandalaUniforms {
-    public var time: Float = 0
+    public var rot: Float = 0
+    public var hue: Float = 0
     public var bass: Float = 0
     public var treble: Float = 0
     public var resolution: SIMD2<Float> = .zero
 }
 
 public struct HypnoUniforms {
-    public var time: Float = 0
+    public var offset: Float = 0
+    public var colorShift: Float = 0
+    public var hue: Float = 0
     public var bass: Float = 0
-    public var treble: Float = 0
     public var resolution: SIMD2<Float> = .zero
 }
 
 public struct SpiralUniforms {
-    public var time: Float = 0
+    public var offset: Float = 0
+    public var hue: Float = 0
     public var bass: Float = 0
     public var treble: Float = 0
     public var resolution: SIMD2<Float> = .zero
@@ -38,25 +41,32 @@ public struct SubwooferUniforms {
 }
 
 public struct VortexUniforms {
-    public var time: Float = 0
+    public var tunnelRot: Float = 0
     public var bass: Float = 0
     public var treble: Float = 0
     public var twist: Float = 2.0
     public var scale: Float = 1.0
-    public var rippleAmp: Float = 0.08
+    public var rippleAmp: Float = 0.06
     public var resolution: SIMD2<Float> = .zero
     public var atlasGrid: SIMD2<Float> = .init(4, 3)
 }
 
 public struct WavesUniforms {
-    public var time: Float = 0
+    public var waveSpin: Float = 0
     public var bass: Float = 0
     public var treble: Float = 0
     public var ringScale: Float = 0.13
-    public var spin: Float = 0.5
     public var resolution: SIMD2<Float> = .zero
     public var atlasGrid: SIMD2<Float> = .init(4, 3)
 }
+
+// MARK: - State structs
+
+public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
+public struct HypnoState   { public var offset: Float = 0; public var colorShift: Float = 0; public var hue: Float = 0 }
+public struct SpiralState  { public var offset: Float = 0; public var hue: Float = 0 }
+public struct VortexState  { public var tunnelRot: Float = 0 }
+public struct WavesState   { public var waveSpin: Float = 0 }
 
 // MARK: - Factory
 
@@ -88,11 +98,12 @@ public enum VisualizerFactory {
 
     private static func makeBlob(context: MetalContext,
                                  pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
-        try FragmentVisualizerRenderer<BlobUniforms>(
+        try FragmentRenderer<BlobUniforms, Void>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "blob_vs", fragmentFunction: "blob_fs",
-            label: "Blob"
-        ) { a, res in
+            label: "Blob",
+            initialState: ()
+        ) { _, a, _, res in
             let audio = min(1.0, a.bass * 0.75 + a.beatPulse * 0.45)
             return BlobUniforms(time: a.time, audio: audio, resolution: res)
         }
@@ -100,44 +111,88 @@ public enum VisualizerFactory {
 
     private static func makeMandala(context: MetalContext,
                                     pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
-        try FragmentVisualizerRenderer<MandalaUniforms>(
+        try FragmentRenderer<MandalaUniforms, MandalaState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "mandala_vs", fragmentFunction: "mandala_fs",
-            label: "Mandala"
-        ) { a, res in
-            MandalaUniforms(time: a.time, bass: a.bass, treble: a.treble, resolution: res)
+            label: "Mandala",
+            initialState: MandalaState()
+        ) { state, a, dt, res in
+            // Web's per-frame integrators at 60 fps: rot += 0.004 + treble*0.06; hue += 0.4 + treble*2.5.
+            let normDt = dt * 60.0
+            state.rot += (0.004 + a.treble * 0.06) * normDt
+            var newHue = state.hue + (0.4 + a.treble * 2.5) * normDt / 360.0
+            newHue -= floor(newHue)                    // wrap into [0, 1)
+            state.hue = newHue
+            return MandalaUniforms(
+                rot: state.rot,
+                hue: state.hue,
+                bass: a.bass,
+                treble: a.treble,
+                resolution: res
+            )
         }
     }
 
     private static func makeHypno(context: MetalContext,
                                   pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
-        try FragmentVisualizerRenderer<HypnoUniforms>(
+        try FragmentRenderer<HypnoUniforms, HypnoState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "hypno_vs", fragmentFunction: "hypno_fs",
-            label: "Hypno"
-        ) { a, res in
-            HypnoUniforms(time: a.time, bass: a.bass, treble: a.treble, resolution: res)
+            label: "Hypno",
+            initialState: HypnoState()
+        ) { state, a, dt, res in
+            // Web: ringOffset += 0.45 + bass*7 pixels/frame; SPACING = 46 px.
+            // We store offset in "ring spacings" so the shader can treat it as dimensionless.
+            let normDt = dt * 60.0
+            state.offset += (0.45 + a.bass * 7.0) / 46.0 * normDt
+            // Wrap + bump colorShift (web's parity trick — keeps bands continuous on wrap).
+            while state.offset >= 1.0 {
+                state.offset -= 1.0
+                state.colorShift += 1
+            }
+            state.hue += (0.3 + a.treble * 2.0) * normDt / 360.0
+            state.hue -= floor(state.hue)
+            return HypnoUniforms(
+                offset: state.offset,
+                colorShift: state.colorShift,
+                hue: state.hue,
+                bass: a.bass,
+                resolution: res
+            )
         }
     }
 
     private static func makeSpiral(context: MetalContext,
                                    pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
-        try FragmentVisualizerRenderer<SpiralUniforms>(
+        try FragmentRenderer<SpiralUniforms, SpiralState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "spiral_vs", fragmentFunction: "spiral_fs",
-            label: "Spiral"
-        ) { a, res in
-            SpiralUniforms(time: a.time, bass: a.bass, treble: a.treble, resolution: res)
+            label: "Spiral",
+            initialState: SpiralState()
+        ) { state, a, dt, res in
+            // Web: spiralOffset += 0.45 + bass*7 px/frame; pitch = 50 px. Offset stored in "pitches".
+            let normDt = dt * 60.0
+            state.offset += (0.45 + a.bass * 7.0) / 50.0 * normDt
+            state.hue += (0.3 + a.treble * 2.0) * normDt / 360.0
+            state.hue -= floor(state.hue)
+            return SpiralUniforms(
+                offset: state.offset,
+                hue: state.hue,
+                bass: a.bass,
+                treble: a.treble,
+                resolution: res
+            )
         }
     }
 
     private static func makeSubwoofer(context: MetalContext,
                                       pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
-        try FragmentVisualizerRenderer<SubwooferUniforms>(
+        try FragmentRenderer<SubwooferUniforms, Void>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "subwoofer_vs", fragmentFunction: "subwoofer_fs",
-            label: "Subwoofer"
-        ) { a, res in
+            label: "Subwoofer",
+            initialState: ()
+        ) { _, a, _, res in
             SubwooferUniforms(time: a.time, bass: a.bass, beatPulse: a.beatPulse, resolution: res)
         }
     }
@@ -148,15 +203,19 @@ public enum VisualizerFactory {
                                    pixelFormat: MTLPixelFormat,
                                    atlas: EmojiAtlas) throws -> VisualizerRenderer {
         let grid = SIMD2<Float>(Float(atlas.columns), Float(atlas.rows))
-        return try InstancedAtlasRenderer<VortexUniforms>(
+        return try InstancedAtlasRenderer<VortexUniforms, VortexState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "vortex_vs", fragmentFunction: "vortex_fs",
             atlas: atlas.texture,
-            instanceCount: 12 * 13,  // matches ARMS * STEPS in EmojiVortex.metal
-            label: "EmojiVortex"
-        ) { a, res in
-            VortexUniforms(
-                time: a.time,
+            instanceCount: 12 * 13,
+            label: "EmojiVortex",
+            initialState: VortexState()
+        ) { state, a, dt, res in
+            // Web: tunnelRot += 0.004 + mid * 0.008 per frame at 60fps.
+            let normDt = dt * 60.0
+            state.tunnelRot += (0.004 + a.mid * 0.008) * normDt
+            return VortexUniforms(
+                tunnelRot: state.tunnelRot,
                 bass: a.bass,
                 treble: a.treble,
                 twist: 1.8 + a.bass * 2.0,
@@ -172,19 +231,22 @@ public enum VisualizerFactory {
                                   pixelFormat: MTLPixelFormat,
                                   atlas: EmojiAtlas) throws -> VisualizerRenderer {
         let grid = SIMD2<Float>(Float(atlas.columns), Float(atlas.rows))
-        return try InstancedAtlasRenderer<WavesUniforms>(
+        return try InstancedAtlasRenderer<WavesUniforms, WavesState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "waves_vs", fragmentFunction: "waves_fs",
             atlas: atlas.texture,
-            instanceCount: 91,  // 1 + 6 + 12 + 18 + 24 + 30 (matches cum[] in shader)
-            label: "EmojiWaves"
-        ) { a, res in
-            WavesUniforms(
-                time: a.time,
+            instanceCount: 91,
+            label: "EmojiWaves",
+            initialState: WavesState()
+        ) { state, a, dt, res in
+            // Web: waveSpin += 0.008 * waveSpinSpeed (we fix waveSpinSpeed at 1.0).
+            let normDt = dt * 60.0
+            state.waveSpin += 0.008 * normDt
+            return WavesUniforms(
+                waveSpin: state.waveSpin,
                 bass: a.bass,
                 treble: a.treble,
                 ringScale: 0.13,
-                spin: 0.4 + a.treble * 0.3,
                 resolution: res,
                 atlasGrid: grid
             )

@@ -4,6 +4,7 @@ import simd
 
 public struct FerroUniforms {
     public var time: Float = 0
+    public var hue: Float = 0          // CPU-accumulated fluidHue, 0..1
     public var bass: Float = 0
     public var treble: Float = 0
     public var spikeCount: Int32 = 48
@@ -19,6 +20,7 @@ public final class FerroRenderer: VisualizerRenderer {
     private var heights: [Float]
     private var velocities: [Float]
     private var lastTime: Float = 0
+    private var fluidHue: Float = 0    // 0..1; web: += 0.06 + bass*1.8 per frame (degrees)
 
     // Matches web spec: k = stiffness * (0.12 + bass * 2.8); damp = 0.60 - bass * 0.46.
     public var stiffness: Float = 0.95
@@ -86,10 +88,15 @@ public final class FerroRenderer: VisualizerRenderer {
             heights[i] = max(0.0, heights[i] + velocities[i] * normDt)
         }
 
+        // Hue drift + bass kick snap — matches web's fluidHue += 0.06 + bass*1.8 deg/frame.
+        fluidHue += (0.06 + audio.bass * 1.8) * normDt / 360.0
+        fluidHue -= floor(fluidHue)
+
         let ds = view.drawableSize
         let res = SIMD2<Float>(Float(ds.width), Float(ds.height))
         var u = FerroUniforms(
             time: audio.time,
+            hue: fluidHue,
             bass: audio.bass,
             treble: audio.treble,
             spikeCount: Int32(spikeCount),

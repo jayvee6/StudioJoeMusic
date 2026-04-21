@@ -2,9 +2,10 @@
 using namespace metal;
 
 struct HypnoUniforms {
-    float time;
+    float offset;        // in ring-spacings, CPU-accumulated
+    float colorShift;    // int counter, increments on offset wrap; keeps parity continuous
+    float hue;           // 0..1, CPU-accumulated
     float bass;
-    float treble;
     float2 resolution;
 };
 
@@ -21,53 +22,56 @@ vertex HVSOut hypno_vs(uint vid [[vertex_id]]) {
     return o;
 }
 
+static float3 hsl2rgb(float h, float s, float l) {
+    float3 rgb = clamp(
+        abs(fmod(h * 6.0 + float3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0,
+        0.0, 1.0);
+    float c = (1.0 - abs(2.0 * l - 1.0)) * s;
+    return l + c * (rgb - 0.5);
+}
+
 fragment float4 hypno_fs(HVSOut in [[stage_in]],
                          constant HypnoUniforms& u [[buffer(0)]],
                          constant float* bassHistory [[buffer(1)]]) {
-    float2 uv = (in.uv - 0.5) * float2(u.resolution.x / u.resolution.y, 1.0);
+    // Short-side square projection so spacing matches min(W,H).
+    float aspect = u.resolution.x / u.resolution.y;
+    float2 uv = in.uv - 0.5;
+    if (aspect > 1.0) uv.x *= aspect; else uv.y /= aspect;
     float r = length(uv);
 
-    // Constant-rate offset. Speed modulated by bass caused jumps; brightness
-    // modulation lives below, in the color path, which is jump-safe.
-    float speed = 0.22;
-    float spacing = 0.055;
-    float bigOffset = u.time * speed;
+    // SPACING in short-side units. Web: 46 px / shortSide ≈ 0.07 at an iPhone portrait viewport.
+    const float spacing = 0.07;
 
-    float ringR = r - bigOffset;
-    float ringIdx = floor(ringR / spacing);
+    // Ring index at this pixel, accounting for the CPU-integrated offset.
+    // Web: R(i) = i*SPACING - ringOffset  ⇒  i = (r + ringOffset)/SPACING
+    float ringR = (r / spacing) + u.offset;
+    int ringIdx = int(floor(ringR));
 
-    // Outward traveling bass wave: ring N reads bassHistory[N] so each ring
-    // lags one frame behind the one inside it. Clamp index to buffer length.
-    int historyIdx = clamp(int(ringIdx) % 16, 0, 15);
-    if (historyIdx < 0) historyIdx += 16;
+    // Bass-history delay: each ring reads bassHistory[i] for the outward-traveling wave.
+    int historyIdx = abs(ringIdx) % 16;
     float delayedBass = bassHistory[historyIdx];
 
-    // Parity: alternating light / dark stripes. +256 keeps mod2 stable with negatives.
-    float parity = fmod(abs(ringIdx) + 256.0, 2.0);
+    // Parity: web keeps bands coherent across offset wraps via ringColorShift.
+    int parityInt = (ringIdx + int(u.colorShift) + 1024) & 1;
 
-    // Hue cycles slowly with time + treble.
-    float hue = u.time * 0.05 + u.treble * 0.45;
-    float3 warm = 0.5 + 0.5 * cos(6.28318 * (hue + float3(0.0, 0.33, 0.67)));
+    // Web: light stripe = hsl(0, 0%, 82 + delayedBass * 18%); dark stripe = hsl(hue, 100%, 15 + bass*30%).
+    float3 light = hsl2rgb(0.0, 0.0, 0.82 + delayedBass * 0.18);
+    float3 dark  = hsl2rgb(u.hue, 1.0, 0.15 + u.bass * 0.30);
 
-    // Light stripes: near-white, brighter on delayed bass (wave propagates outward).
-    float3 lightStripe = float3(0.82 + delayedBass * 0.18);
-    // Dark stripes: colored, warm hue, also brighter on bass but much dimmer baseline.
-    float3 darkStripe = warm * (0.15 + u.bass * 0.30);
-
-    float3 color = parity < 1.0 ? lightStripe : darkStripe;
-
-    // Soften stripe edges for less aliasing
-    float localPhase = fract(ringR / spacing);
+    // Anti-alias the stripe edges a bit.
+    float localPhase = fract(ringR);
     float edge = min(localPhase, 1.0 - localPhase);
-    float softness = smoothstep(0.0, 0.06, edge);
-    color *= (0.6 + softness * 0.4);
+    float softness = smoothstep(0.0, 0.08, edge);
 
-    // Bass flash: when bass crosses 0.5, blend toward bright warm color as a strobe.
+    float3 color = (parityInt == 0) ? light : dark;
+    color *= (0.70 + softness * 0.30);
+
+    // Web's full-canvas flash when bass > 0.5.
     float flash = smoothstep(0.5, 0.85, u.bass);
-    color = mix(color, warm * 1.2, flash * 0.35);
+    color = mix(color, light * 1.15, flash * 0.35);
 
-    // Radial falloff
-    color *= smoothstep(0.98, 0.05, r);
+    // Radial fade toward edges so the rings melt into the background.
+    color *= smoothstep(1.05, 0.05, r);
 
     return float4(max(color, float3(0.0)), 1.0);
 }

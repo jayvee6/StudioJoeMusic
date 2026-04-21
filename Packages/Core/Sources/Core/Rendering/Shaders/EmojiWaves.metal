@@ -2,11 +2,10 @@
 using namespace metal;
 
 struct WavesUniforms {
-    float time;
+    float waveSpin;       // CPU-accumulated at 0.008/frame (web: waveSpin += 0.008 * waveSpinSpeed)
     float bass;
     float treble;
-    float ringScale;
-    float spin;
+    float ringScale;      // base ring spacing
     float2 resolution;
     float2 atlasGrid;
 };
@@ -18,7 +17,6 @@ struct WVSOut {
     float alpha;
 };
 
-// Variable emoji counts per ring (matches web prototype): 1, 6, 12, 18, 24, 30 = 91 total.
 constant int kRingCount = 6;
 
 vertex WVSOut waves_vs(uint vid [[vertex_id]],
@@ -27,8 +25,7 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
                        constant float* bassHistory [[buffer(1)]]) {
     int id = int(iid);
 
-    // Cumulative counts: ring 0 holds 1 emoji (centerpiece), ring i holds i*6.
-    // Running totals: [1, 7, 19, 37, 61, 91].
+    // Web: ring 0 holds 1 emoji, ring i holds i*6. Running totals [1, 7, 19, 37, 61, 91].
     int cum[6] = {1, 7, 19, 37, 61, 91};
     int ring = 0;
     for (int i = 0; i < kRingCount; i++) {
@@ -38,27 +35,28 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
     int slot = id - ringStart;
     int perRing = (ring == 0) ? 1 : ring * 6;
 
-    // Radial position — base spacing times ring index, scaled by bass ripple delayed
-    // per ring (matches web's bassHistory[ring*2] outward traveling wave).
-    float baseR = (float(ring) + 0.9) * u.ringScale;
+    // Radial position — base spacing * ring index, delayed-bass pulse per ring.
+    // Web: baseR = (ring+1) * shortSide * 0.09; pulseR = baseR * (1 + delayedBass * 0.45).
+    float baseR = (float(ring) + 1.0) * u.ringScale;
     int historyIdx = min(ring * 2, 15);
     float delayedBass = bassHistory[historyIdx];
-    float pulseMult = 1.0 + delayedBass * 0.35;
+    float pulseMult = 1.0 + delayedBass * 0.45;
     float radius = (ring == 0) ? 0.0 : baseR * pulseMult;
 
-    // Angular position — alternating spin direction per ring; ring 0 simply rotates.
+    // Angular position — alternating spin direction per ring (web's ring i spins i%2 parity).
     float dir = (ring % 2 == 0) ? 1.0 : -1.0;
-    float ringSpin = u.time * (0.12 + u.spin * 0.35) * dir;
+    float ringSpinPhase = u.waveSpin * dir;
     float angle = (ring == 0)
-        ? ringSpin
-        : float(slot) / float(perRing) * 2.0 * M_PI_F + ringSpin;
+        ? ringSpinPhase
+        : float(slot) / float(perRing) * 2.0 * M_PI_F + ringSpinPhase;
 
     float aspect = u.resolution.x / u.resolution.y;
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 
-    // Emoji sizing: inner rings larger, bass pulse, centerpiece bigger.
-    float size_world = 0.05 * (1.0 - float(ring) * 0.08) * (1.0 + delayedBass * 0.32);
+    // Emoji sizing: web — 14 + ring*3 + delayedBass * 18 px on shortSide.
+    // shortSide ≈ 1.0 in our units. 14/shortSide ≈ 0.045 baseline; ring=5 → +0.015; bass → +0.06.
+    float size_world = 0.045 + float(ring) * 0.004 + delayedBass * 0.06;
     if (ring == 0) size_world *= 1.35;
 
     float size_x = size_world / aspect;
@@ -74,7 +72,7 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
                         center_clip.y + cy * size_y,
                         0.0, 1.0);
     o.uv = float2((cx + 1.0) * 0.5, 1.0 - (cy + 1.0) * 0.5);
-    // Emoji pick: web's EMOJIS[(ring*4 + slot) % 12].
+    // Web's emoji pick: EMOJIS[(ring*4 + j) % 12]
     o.emojiIndex = float((ring * 4 + slot) % 12);
     o.alpha = alpha;
     return o;

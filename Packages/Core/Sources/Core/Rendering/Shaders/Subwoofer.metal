@@ -21,88 +21,93 @@ vertex SubVSOut subwoofer_vs(uint vid [[vertex_id]]) {
     return o;
 }
 
+static float3 hsl2rgb(float h, float s, float l) {
+    float3 rgb = clamp(
+        abs(fmod(h * 6.0 + float3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0,
+        0.0, 1.0);
+    float c = (1.0 - abs(2.0 * l - 1.0)) * s;
+    return l + c * (rgb - 0.5);
+}
+
 fragment float4 subwoofer_fs(SubVSOut in [[stage_in]],
                              constant SubwooferUniforms& u [[buffer(0)]],
                              constant float* bassHistory [[buffer(1)]]) {
-    float2 uv = (in.uv - 0.5) * float2(u.resolution.x / u.resolution.y, 1.0);
+    float aspect = u.resolution.x / u.resolution.y;
+    float2 uv = in.uv - 0.5;
+    if (aspect > 1.0) uv.x *= aspect; else uv.y /= aspect;
     float r = length(uv);
 
-    // Dynamic zone radii.
-    //   Cap pumps with current bass (instantaneous piston motion).
-    //   Surround flex lags on bassHistory[8] — the delayed-bass outer ripple.
-    float capR      = 0.085 * (1.0 + u.bass * 0.22);
+    // Web ring radii on shortSide: frame 0.46, surround 0.43, cone 0.30, cap 0.09.
+    float capR      = 0.085 * (1.0 + u.bass * 0.28);
     float coneR     = 0.30;
-    float surFlex   = bassHistory[8] * 0.018;
+    float surFlex   = bassHistory[8] * 0.014;
     float surroundR = 0.38 + surFlex;
-    float basketR   = 0.45;
-    float cabinetR  = 0.58;
+    float basketR   = 0.43;
+    float cabinetR  = 0.46;
 
-    float3 color = float3(0.008);
+    // HSL hues for the web's low-saturation steel / amber palette.
+    const float hueSteel  = 210.0 / 360.0;
+    const float hueAmber  = 30.0  / 360.0;
+
+    float3 color = float3(0.005);
 
     if (r < capR) {
-        // Dust cap: metallic steel with off-center specular highlight.
+        // Dust cap — HSL(210°, 7%, 40%) with an off-center specular highlight.
         float t = 1.0 - r / capR;
         float2 hlCenter = float2(-0.022, 0.032);
         float hlDist = length(uv - hlCenter);
         float highlight = exp(-hlDist * 34.0) * (0.55 + u.bass * 0.35);
-        float3 capBase = mix(float3(0.18, 0.20, 0.24),
-                             float3(0.55, 0.58, 0.64),
-                             t);
+        float3 capBase = hsl2rgb(hueSteel, 0.07, 0.30 + t * 0.12);
         color = capBase + float3(1.0, 0.98, 0.96) * highlight;
     }
     else if (r < coneR) {
-        // Cone: dark blue-grey with radial depth, strong highlight ring near cap,
-        // plus 3 faint concentric depth ripples driven by bassHistory at
-        // progressively older indices — that's the web's traveling depth wave.
+        // Cone — HSL(210°, 5-7%, 7-22%) radial, plus 3 history-driven depth ripples.
         float t = (r - capR) / max(coneR - capR, 0.001);
-        float3 coneBase = mix(float3(0.22, 0.23, 0.27),
-                              float3(0.035, 0.038, 0.048),
-                              t);
+        float coneL = mix(0.22, 0.07, t);
+        float3 coneBase = hsl2rgb(hueSteel, 0.06, coneL);
 
+        // Depth ripples — 3 concentric faint strokes at progressively older history indices.
         for (int i = 0; i < 3; i++) {
             int hi = clamp((i + 1) * 3, 0, 15);
-            float histBass = bassHistory[hi];
-            float rippleR = capR + (coneR - capR) * (0.30 + float(i) * 0.22 + histBass * 0.12);
+            float hist = bassHistory[hi];
+            float rippleR = capR + (coneR - capR) * (0.30 + float(i) * 0.22 + hist * 0.12);
             float rippleDist = abs(r - rippleR);
-            float rippleGlow = exp(-rippleDist * 220.0) * histBass * 0.28;
-            coneBase += float3(0.55, 0.62, 0.72) * rippleGlow;
+            float rippleGlow = exp(-rippleDist * 220.0) * hist * 0.30;
+            coneBase += hsl2rgb(hueSteel, 0.45, 0.55) * rippleGlow;
         }
 
-        // Highlight ring just outside the cap so the cone looks recessed.
-        coneBase += float3(0.14, 0.14, 0.16) * smoothstep(0.30, 0.0, t);
+        // Inner highlight ring just outside the cap so the cone reads as recessed.
+        coneBase += hsl2rgb(hueSteel, 0.15, 0.30) * smoothstep(0.30, 0.0, t);
         color = coneBase;
     }
     else if (r < surroundR) {
-        // Rubber surround: near-black base with a sin() bulge giving rounded
-        // 3D shape; delayed bass brightens the bulge along with the flex.
+        // Rubber surround — HSL(30°, 5-6%, 10-34%), sin(t*π) bulge curve, delayed-bass flex.
         float t = (r - coneR) / max(surroundR - coneR, 0.001);
         float curve = sin(t * M_PI_F);
-        float3 rubber = float3(0.028, 0.024, 0.022)
-                      + float3(0.095, 0.085, 0.078) * curve;
-        float flexGlow = bassHistory[8] * 0.10 * curve;
-        color = rubber + float3(flexGlow, flexGlow * 0.92, flexGlow * 0.82);
+        float surL = mix(0.10, 0.34, curve);
+        float3 rubber = hsl2rgb(hueAmber, 0.055, surL);
+        float flexGlow = bassHistory[8] * 0.09 * curve;
+        color = rubber + hsl2rgb(hueAmber, 0.3, 0.4) * flexGlow;
     }
     else if (r < basketR) {
-        // Basket: dark metallic with subtle gradient toward the cabinet edge.
+        // Basket — warm near-black (#18160f): HSL(42°, 14%, 7%) gradient.
         float t = (r - surroundR) / max(basketR - surroundR, 0.001);
-        color = mix(float3(0.24, 0.22, 0.18),
-                    float3(0.13, 0.12, 0.10),
+        color = mix(hsl2rgb(0.115, 0.14, 0.09),
+                    hsl2rgb(0.115, 0.12, 0.06),
                     t);
     }
     else if (r < cabinetR) {
-        // Cabinet: very dark, subtle radial shading so it doesn't look flat.
+        // Cabinet — #060606, very dark with a subtle sheen.
         float t = (r - basketR) / max(cabinetR - basketR, 0.001);
-        color = mix(float3(0.055, 0.05, 0.045),
-                    float3(0.025, 0.022, 0.02),
-                    t);
+        color = mix(float3(0.025), float3(0.012), t);
     }
     else {
-        // Outside cabinet: near-black vignette edge.
-        float vign = smoothstep(1.15, 0.55, r);
-        color = float3(0.003) * vign;
+        // Outside frame
+        float vign = smoothstep(1.15, 0.50, r);
+        color = float3(0.002) * vign;
     }
 
-    // Bass breathes the whole speaker slightly (exposure simulation).
+    // Whole-speaker bass breath.
     color *= (0.88 + u.bass * 0.14 + u.beatPulse * 0.08);
 
     return float4(max(color, float3(0.0)), 1.0);

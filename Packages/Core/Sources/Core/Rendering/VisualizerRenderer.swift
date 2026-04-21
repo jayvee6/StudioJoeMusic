@@ -38,28 +38,35 @@ public protocol VisualizerRenderer: AnyObject {
     func draw(in view: MTKView, audio: AudioFrame)
 }
 
-/// Generic fragment-only renderer: fullscreen triangle, one uniforms buffer in fragment slot 0.
-/// U must be layout-compatible with the Metal struct expected by the fragment shader.
+/// Generic fragment-only renderer. `State` is per-frame mutable state (rotation
+/// accumulators, hue drift, etc.) owned by the renderer; `step` integrates that
+/// state with the current audio frame and produces `U`, the shader uniforms.
+///
+/// For stateless visualizers, pass `State` = `Void` and provide a step that ignores
+/// the state parameter.
 @MainActor
-public final class FragmentVisualizerRenderer<U>: VisualizerRenderer {
+public final class FragmentRenderer<U, State>: VisualizerRenderer {
     private let context: MetalContext
     private let pipeline: MTLRenderPipelineState
-    private let toUniforms: (AudioFrame, SIMD2<Float>) -> U
+    private var state: State
+    private let step: (inout State, AudioFrame, Float, SIMD2<Float>) -> U
+    private var lastTime: Float = -1
 
     public init(context: MetalContext,
                 pixelFormat: MTLPixelFormat,
                 vertexFunction: String,
                 fragmentFunction: String,
                 label: String,
-                toUniforms: @escaping (AudioFrame, SIMD2<Float>) -> U) throws {
+                initialState: State,
+                step: @escaping (inout State, AudioFrame, Float, SIMD2<Float>) -> U) throws {
         self.context = context
-        self.toUniforms = toUniforms
+        self.state = initialState
+        self.step = step
 
         guard let vertex = context.library.makeFunction(name: vertexFunction),
               let fragment = context.library.makeFunction(name: fragmentFunction) else {
             throw MetalContext.Error.libraryLoadFailed(nil)
         }
-
         let desc = MTLRenderPipelineDescriptor()
         desc.label = label
         desc.vertexFunction = vertex
@@ -69,9 +76,14 @@ public final class FragmentVisualizerRenderer<U>: VisualizerRenderer {
     }
 
     public func draw(in view: MTKView, audio: AudioFrame) {
-        let drawableSize = view.drawableSize
-        let res = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
-        var u = toUniforms(audio, res)
+        let dt: Float = lastTime < 0
+            ? 1.0 / 60.0
+            : min(0.1, max(0.001, audio.time - lastTime))
+        lastTime = audio.time
+
+        let ds = view.drawableSize
+        let res = SIMD2<Float>(Float(ds.width), Float(ds.height))
+        var u = step(&state, audio, dt, res)
 
         guard let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor,
@@ -98,3 +110,6 @@ public final class FragmentVisualizerRenderer<U>: VisualizerRenderer {
         cmd.commit()
     }
 }
+
+// Keep old stateless alias for any remaining consumers during transition.
+public typealias FragmentVisualizerRenderer<U> = FragmentRenderer<U, Void>
