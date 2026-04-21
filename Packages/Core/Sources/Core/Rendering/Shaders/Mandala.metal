@@ -66,6 +66,25 @@ static float sdRegularPolygon(float2 p, float r, int n) {
     return length(p) * sign(p.x);
 }
 
+// Star SDF — Iñigo Quilez. n points, `m` controls pointiness (between 2 and n).
+// m = 2 is sharpest (classic pentagram / star-of-david shape); m → n flattens
+// toward a regular n-gon.
+static float sdStar(float2 p, float r, int n, float m) {
+    float an = M_PI_F / float(n);
+    float en = M_PI_F / m;
+    float2 acs = float2(cos(an), sin(an));
+    float2 ecs = float2(cos(en), sin(en));
+
+    float theta = atan2(p.x, p.y);
+    if (theta < 0.0) theta += 2.0 * M_PI_F;
+    float bn = fmod(theta, 2.0 * an) - an;
+    p = length(p) * float2(cos(bn), abs(sin(bn)));
+
+    p -= r * acs;
+    p += ecs * clamp(-dot(p, ecs), 0.0, r * acs.y / ecs.y);
+    return length(p) * sign(p.x);
+}
+
 static float2 rot2(float2 p, float a) {
     float c = cos(a), s = sin(a);
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
@@ -87,18 +106,27 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
     float haloW = 0.005  + u.bass * 0.007;
     float radiusScale = 0.55 + u.bass * 0.60;
 
-    // 6 distinct polygons — triangle, square, pentagon, hexagon, heptagon, octagon.
-    const int SIDES[6] = {3, 4, 5, 6, 7, 8};
+    // Six layers with genuinely distinct silhouettes — polygons and stars alternating
+    // so adjacent layers look clearly different at a glance. Inner → outer:
+    //   Layer 0: triangle
+    //   Layer 1: square
+    //   Layer 2: 5-point pentagram (star)
+    //   Layer 3: hexagon
+    //   Layer 4: 6-point star (hexagram / star-of-David)
+    //   Layer 5: octagon
+    const int   SHAPE_KIND[6]  = {0, 0, 1, 0, 1, 0};  // 0 = polygon, 1 = star
+    const int   SHAPE_SIDES[6] = {3, 4, 5, 6, 6, 8};
+    const float SHAPE_M[6]     = {0.0, 0.0, 2.0, 0.0, 2.0, 0.0};
 
     // Alpha-over compositor — each layer paints over earlier ones translucently
     // (matches Canvas 2D's default source-over blend). Preserves layer identity at
     // crossings instead of piling up into an additive flower bloom.
     float4 accum = float4(0.0);
 
-    // Paint from INNER (i=0, smallest polygon) outward. Outer layers overlay inner,
+    // Paint from INNER (i=0, smallest shape) outward. Outer layers overlay inner,
     // matching the web's draw order.
     for (int i = 0; i < 6; i++) {
-        int sides = SIDES[i];
+        int sides = SHAPE_SIDES[i];
 
         // Adjacent rings counter-rotate so the tilts alternate (matches reference).
         float dir = (i % 2 == 0) ? 1.0 : -1.0;
@@ -111,7 +139,12 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
         float layerHue = fmod(u.hue + float(i) * (42.0 / 360.0), 1.0);
         float3 lineCol = hsl2rgb(layerHue, 1.0, 0.62);
 
-        float d = sdRegularPolygon(p, r, sides);
+        float d;
+        if (SHAPE_KIND[i] == 0) {
+            d = sdRegularPolygon(p, r, sides);
+        } else {
+            d = sdStar(p, r, sides, SHAPE_M[i]);
+        }
         float absD = abs(d);
 
         // Sharp hairline core (smoothstep from lineW → ~0 keeps the line opaque at
