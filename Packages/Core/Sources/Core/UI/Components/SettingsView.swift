@@ -5,15 +5,18 @@ public struct SettingsView: View {
     @State private var spotifyAuth = SpotifyAuth()
     @State private var appleMusicStatus: MPMediaLibraryAuthorizationStatus =
         MPMediaLibrary.authorizationStatus()
+    @ObservedObject var viewModel: VisualizerViewModel
     public var onDismiss: () -> Void
 
-    public init(onDismiss: @escaping () -> Void) {
+    public init(viewModel: VisualizerViewModel, onDismiss: @escaping () -> Void) {
+        self.viewModel = viewModel
         self.onDismiss = onDismiss
     }
 
     public var body: some View {
         NavigationStack {
             List {
+                analysisSection
                 appleMusicSection
                 spotifySection
                 aboutSection
@@ -36,6 +39,75 @@ public struct SettingsView: View {
             if spotifyAuth.isConnected {
                 await spotifyAuth.refreshProfile()
             }
+        }
+    }
+
+    // MARK: - Analysis source
+
+    private var analysisSection: some View {
+        Section {
+            HStack {
+                Image(systemName: "waveform.badge.magnifyingglass")
+                    .font(.title3)
+                    .foregroundStyle(StudioJoeColors.label2)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Prefer Spotify Analysis")
+                        .foregroundStyle(StudioJoeColors.label1)
+                    Text(analysisStatusText)
+                        .font(.footnote)
+                        .foregroundStyle(StudioJoeColors.label3)
+                        .lineLimit(3)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { viewModel.preferSyntheticAnalysis },
+                    set: { viewModel.setPreferSyntheticAnalysis($0) }
+                ))
+                .labelsHidden()
+            }
+
+            HStack {
+                Image(systemName: sourceIcon)
+                    .foregroundStyle(sourceIconColor)
+                Text("Current source: \(sourceLabel)")
+                    .font(.footnote)
+                    .foregroundStyle(StudioJoeColors.label2)
+                Spacer()
+            }
+        } header: {
+            Text("Audio Reactivity")
+        } footer: {
+            Text("When on, Spotify tracks drive the visualizer from Spotify's pre-computed beat + loudness analysis instead of the mic. Mic is used only as a last-resort fallback for DRM Apple Music tracks playing on speakers.")
+        }
+        .listRowBackground(Color.white.opacity(0.06))
+    }
+
+    private var analysisStatusText: String {
+        if !viewModel.preferSyntheticAnalysis {
+            return "Off — using live FFT from file mixer or mic"
+        }
+        return "Spotify tracks use pre-computed analysis; others fall back to tap"
+    }
+
+    private var sourceIcon: String {
+        switch viewModel.activeAnalysisSource {
+        case .synthetic: return "antenna.radiowaves.left.and.right"
+        case .tap:       return "waveform"
+        }
+    }
+
+    private var sourceIconColor: Color {
+        switch viewModel.activeAnalysisSource {
+        case .synthetic: return StudioJoeColors.accent
+        case .tap:       return StudioJoeColors.label3
+        }
+    }
+
+    private var sourceLabel: String {
+        switch viewModel.activeAnalysisSource {
+        case .synthetic: return "Synthetic (Spotify)"
+        case .tap:       return "Live tap"
         }
     }
 

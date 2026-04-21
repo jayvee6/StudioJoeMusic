@@ -87,6 +87,7 @@ public struct MetalVisualizerView: UIViewRepresentable {
                 history[i] = bassRing[(bassHead + bassRing.count - 1 - i) % bassRing.count]
             }
 
+            let f = viewModel.metadataFeatures
             let audio = AudioFrame(
                 time: Float(CACurrentMediaTime() - startTime),
                 bass: viewModel.bass,
@@ -95,7 +96,11 @@ public struct MetalVisualizerView: UIViewRepresentable {
                 beatPulse: viewModel.beatPulse,
                 bpm: Float(viewModel.currentBPM),
                 magnitudes: viewModel.magnitudes,
-                bassHistory: history
+                bassHistory: history,
+                valence: Float(f.valence ?? 0.5),
+                energy: Float(f.energy ?? 0.5),
+                danceability: Float(f.danceability ?? 0.5),
+                tempoBPM: Float(f.tempoBPM ?? 120)
             )
             renderer.draw(in: view, audio: audio)
         }

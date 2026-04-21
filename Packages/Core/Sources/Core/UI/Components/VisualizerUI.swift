@@ -72,7 +72,7 @@ public struct VisualizerUI: View {
             }
         }
         .sheet(isPresented: $showSettings) {
-            SettingsView { showSettings = false }
+            SettingsView(viewModel: viewModel) { showSettings = false }
         }
         .alert("Playback error",
                isPresented: Binding(

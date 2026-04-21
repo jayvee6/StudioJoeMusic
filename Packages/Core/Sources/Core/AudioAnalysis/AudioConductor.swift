@@ -11,6 +11,16 @@ public enum PlaybackMode: Sendable, Equatable {
     case system   // MPMusicPlayerController + inputNode (mic) tap (DRM tracks)
 }
 
+/// Selects which signal drives the `spectrum` stream. Playback mode
+/// (.file / .system) is chosen by the source of the audio itself — it is
+/// independent of this choice. For DRM tracks we can prefer synthetic over
+/// the mic; for owned file playback we can still flip to synthetic to match
+/// the Spotify-anchored visuals.
+public enum AnalysisSource {
+    case tap                            // FFT from active AVAudioEngine tap
+    case synthetic(SyntheticAnalysisDriver)
+}
+
 @Observable
 public final class AudioConductor: @unchecked Sendable {
     public private(set) var spectrum = Spectrum(binCount: 32)
@@ -22,10 +32,12 @@ public final class AudioConductor: @unchecked Sendable {
     public private(set) var mode: PlaybackMode = .idle
     public private(set) var currentTitle: String?
     public private(set) var currentArtist: String?
+    public private(set) var analysisSource: AnalysisSource = .tap
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private let fft = FFTCore(fftSize: 1024, binCount: 32)
+    // 2048 at 44.1kHz → 21.5 Hz bin resolution (vs 43 Hz at 1024), better bass.
+    private let fft = FFTCore(fftSize: 2048, binCount: 32)
     private let bpm = OnsetBPMDetector()
     private let systemPlayer = MPMusicPlayerController.applicationMusicPlayer
 
@@ -69,6 +81,32 @@ public final class AudioConductor: @unchecked Sendable {
     }
 
     // MARK: - Public API
+
+    /// Swap the analysis signal source. Playback mode is NOT changed — this
+    /// only controls whether the `spectrum` stream comes from the real-time
+    /// FFT tap or from a synthetic driver (e.g. Spotify audio analysis).
+    ///
+    /// MainActor because `SyntheticAnalysisDriver` is MainActor-isolated, and
+    /// because we assign the `onUpdate` closure which then writes `spectrum`
+    /// via `DispatchQueue.main.async` to match the rest of this class.
+    @MainActor
+    public func setAnalysisSource(_ source: AnalysisSource) {
+        // Stop any existing synthetic driver before replacing.
+        if case .synthetic(let old) = analysisSource { old.stop() }
+
+        analysisSource = source
+
+        if case .synthetic(let driver) = source {
+            driver.onUpdate = { [weak self] spec in
+                guard let self else { return }
+                DispatchQueue.main.async { self.spectrum = spec }
+            }
+            driver.start { [weak self] in self?.positionSec ?? 0 }
+            log.info("Analysis source → synthetic")
+        } else {
+            log.info("Analysis source → tap")
+        }
+    }
 
     public func load(item: MPMediaItem) async throws {
         let title = item.title ?? "unknown"
@@ -145,6 +183,15 @@ public final class AudioConductor: @unchecked Sendable {
         seekBaseFrames = 0
         bpm.reset()
         cleanupTempFile()
+
+        // Tear down any synthetic analysis driver and reset to tap. Driver
+        // lives on MainActor, so hop there to call stop() and mutate state.
+        let currentSource = analysisSource
+        Task { @MainActor in
+            if case .synthetic(let driver) = currentSource { driver.stop() }
+            self.analysisSource = .tap
+        }
+
         DispatchQueue.main.async {
             self.isPlaying = false
             self.positionSec = 0
@@ -416,13 +463,24 @@ public final class AudioConductor: @unchecked Sendable {
     // MARK: - Tap callback
 
     private func handle(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+        // Always run FFT + BPM: the onset detector stays useful (currentBPM /
+        // isBeatDetected) regardless of which signal drives `spectrum`.
         guard var spec = fft.process(buffer) else { return }
         let hostSec = AVAudioTime.seconds(forHostTime: time.hostTime)
         let result = bpm.ingest(bass: spec.bands.bass, atHostTimeSec: hostSec)
         spec.bands.beatPulse = result.beatPulse
 
+        // Snapshot once — avoids racing with setAnalysisSource between reads.
+        let shouldPublishSpectrum: Bool
+        switch analysisSource {
+        case .tap: shouldPublishSpectrum = true
+        case .synthetic: shouldPublishSpectrum = false
+        }
+
         DispatchQueue.main.async {
-            self.spectrum = spec
+            if shouldPublishSpectrum {
+                self.spectrum = spec
+            }
             self.currentBPM = result.bpm
             self.isBeatDetected = result.isBeatNow
         }

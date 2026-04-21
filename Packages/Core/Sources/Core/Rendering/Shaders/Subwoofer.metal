@@ -6,6 +6,11 @@ struct SubwooferUniforms {
     float bass;
     float beatPulse;
     float2 resolution;
+    // Track-mood tail — matches Swift SubwooferUniforms field order.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct SubVSOut {
@@ -42,7 +47,10 @@ fragment float4 subwoofer_fs(SubVSOut in [[stage_in]],
 
     // Web ring radii on shortSide: frame 0.46, surround 0.43, cone 0.30, cap 0.09.
     // All scaled by fillFactor so the speaker fills more of the tall/wide screen.
-    float capR      = 0.085 * fillFactor * (1.0 + u.bass * 0.28);
+    // Energy scales the cone's reactive displacement — the bass-driven cap expansion
+    // is the most visible "mesh displacement" on this visualizer. Neutral 0.5 → 1.0.
+    float energyMul = 0.6 + u.energy * 0.8;
+    float capR      = 0.085 * fillFactor * (1.0 + u.bass * 0.28 * energyMul);
     float coneR     = 0.30 * fillFactor;
     float surFlex   = bassHistory[8] * 0.014 * fillFactor;
     float surroundR = 0.38 * fillFactor + surFlex;
@@ -60,7 +68,9 @@ fragment float4 subwoofer_fs(SubVSOut in [[stage_in]],
         float t = 1.0 - r / capR;
         float2 hlCenter = float2(-0.022, 0.032);
         float hlDist = length(uv - hlCenter);
-        float highlight = exp(-hlDist * 34.0) * (0.55 + u.bass * 0.35);
+        // Valence brightens the specular — happy tracks pop the gloss, sad tracks mute it.
+        float valenceMul = 0.8 + u.valence * 0.4;
+        float highlight = exp(-hlDist * 34.0) * (0.55 + u.bass * 0.35) * valenceMul;
         float3 capBase = hsl2rgb(hueSteel, 0.07, 0.30 + t * 0.12);
         color = capBase + float3(1.0, 0.98, 0.96) * highlight;
     }

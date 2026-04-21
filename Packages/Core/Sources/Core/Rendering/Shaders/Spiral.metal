@@ -7,6 +7,11 @@ struct SpiralUniforms {
     float bass;
     float treble;
     float2 resolution;
+    // Track-mood tail — matches Swift SpiralUniforms field order.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct SVSOut {
@@ -47,8 +52,15 @@ fragment float4 spiral_fs(SVSOut in [[stage_in]],
     const float armCount = 2.0;
     float armSpacing = pitch / armCount;
 
+    // Danceability scales the angular contribution — a higher value makes the
+    // arms wind tighter (perceptually "faster"). 1.0 at neutral 0.5.
+    float danceMul = 0.7 + u.danceability * 0.6;
+    // Valence-biased hue — 0 offset at neutral 0.5.
+    float hue = u.hue + (u.valence - 0.5) * 0.3;
+    hue -= floor(hue);
+
     // Offset is in pitches (CPU-integrated). For the spiral phase, convert to pitch units.
-    float phase = fmod((r / pitch) - u.offset - theta / (2.0 * M_PI_F), 1.0 / armCount);
+    float phase = fmod((r / pitch) - u.offset - (theta * danceMul) / (2.0 * M_PI_F), 1.0 / armCount);
     if (phase < 0.0) phase += 1.0 / armCount;
     float dist = min(phase, 1.0 / armCount - phase) * pitch;   // back to radial units
 
@@ -66,26 +78,26 @@ fragment float4 spiral_fs(SVSOut in [[stage_in]],
 
     float w1 = lineW + 0.012;
     float m1 = smoothstep(w1, w1 * 0.55, dist);
-    col = mix(col, hsl2rgb(u.hue, 0.80, 0.10), m1);
+    col = mix(col, hsl2rgb(hue, 0.80, 0.10), m1);
 
     float w2 = lineW;
     float m2 = smoothstep(w2, w2 * 0.55, dist);
-    col = mix(col, hsl2rgb(u.hue, 1.00, 0.28), m2);
+    col = mix(col, hsl2rgb(hue, 1.00, 0.28), m2);
 
     float w3 = lineW * 0.78;
     float m3 = smoothstep(w3, w3 * 0.35, dist);
     float glow = exp(-dist * (4.0 - u.bass * 1.5)) * (0.35 + u.bass * 0.30);
-    float3 main3 = hsl2rgb(u.hue, 1.00, 0.50 + u.bass * 0.14);
+    float3 main3 = hsl2rgb(hue, 1.00, 0.50 + u.bass * 0.14);
     col = mix(col, main3, m3);
     col += main3 * glow;
 
     float w4 = lineW * 0.42;
     float m4 = smoothstep(w4, w4 * 0.3, dist);
-    col = mix(col, hsl2rgb(u.hue, 1.00, 0.68 + u.bass * 0.12), m4);
+    col = mix(col, hsl2rgb(hue, 1.00, 0.68 + u.bass * 0.12), m4);
 
     float w5 = lineW * 0.14;
     float m5 = smoothstep(w5, 0.0, dist);
-    col = mix(col, hsl2rgb(u.hue, 0.70, 0.92), m5 * 0.65);
+    col = mix(col, hsl2rgb(hue, 0.70, 0.92), m5 * 0.65);
 
     // Center-hole fill: web draws a disc at pitch*1.4 in main color + glow.
     float holeR = pitch * 1.4;
@@ -93,7 +105,7 @@ fragment float4 spiral_fs(SVSOut in [[stage_in]],
     col = mix(col, main3 + main3 * 0.35, holeFade);
 
     // Warm background fill: hsl((hue+25°) % 1, 50%, 30 + bass*8%).
-    float bgHue = fmod(u.hue + 25.0 / 360.0, 1.0);
+    float bgHue = fmod(hue + 25.0 / 360.0, 1.0);
     float3 bg = hsl2rgb(bgHue, 0.50, 0.18 + u.bass * 0.08);
 
     // Paint bg only where the stroke passes haven't covered.

@@ -9,9 +9,11 @@ struct StudioJoeMusicApp: App {
         let spotifyAuth = SpotifyAuth()
         let catalog = SpotifyCatalog(auth: spotifyAuth)
         let metadata = TrackMetadataService(spotifyCatalog: catalog)
+        let analysis = SpotifyAnalysisClient(auth: spotifyAuth)
         let vm = VisualizerViewModel(
             conductor: AudioConductor(),
-            metadataService: metadata
+            metadataService: metadata,
+            analysisClient: analysis
         )
         _viewModel = StateObject(wrappedValue: vm)
         MediaLibraryPermission.request { _ in }

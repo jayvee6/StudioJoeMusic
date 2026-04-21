@@ -31,6 +31,7 @@ public enum TrackSource: Sendable, Hashable {
     case spotify(id: String)
     case appleWithBPM(Double)
     case appleUnknown
+    case appleWithISRC(isrc: String, bpm: Double?)
     case unknown
 
     public var cacheKey: String {
@@ -38,6 +39,7 @@ public enum TrackSource: Sendable, Hashable {
         case .spotify(let id): return "spotify:\(id)"
         case .appleWithBPM(let b): return "apple-bpm:\(b)"
         case .appleUnknown: return "apple-unknown"
+        case .appleWithISRC(let isrc, _): return "apple-isrc:\(isrc)"
         case .unknown: return "unknown"
         }
     }

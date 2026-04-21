@@ -7,6 +7,11 @@ struct MandalaUniforms {
     float bass;
     float treble;
     float2 resolution;
+    // Track-mood tail — matches Swift MandalaUniforms field order.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct MVSOut {
@@ -89,8 +94,11 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
 
         float r = maxR * (float(i) + 1.0) / 6.0 * radiusScale;
 
-        float layerHue = fmod(u.hue + float(i) * (42.0 / 360.0), 1.0);
-        float3 lineCol = hsl2rgb(layerHue, 1.0, 0.62);
+        // Valence biases the layer palette; add 1.0 before fmod to keep positive
+        // before wrapping. Neutral 0.5 = zero offset.
+        float layerHue = fmod(u.hue + float(i) * (42.0 / 360.0) + (u.valence - 0.5) * 0.4 + 1.0, 1.0);
+        // Energy fades saturation; neutral 0.5 → 0.8 (close to legacy 1.0 full).
+        float3 lineCol = hsl2rgb(layerHue, 0.6 + u.energy * 0.4, 0.62);
 
         // Primary polygon.
         {

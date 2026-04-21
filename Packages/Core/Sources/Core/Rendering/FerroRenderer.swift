@@ -14,6 +14,12 @@ public struct FerroUniforms {
     // guarantees Swift↔Metal struct layouts match across compiler versions.
     public var _pad0: UInt32 = 0
     public var resolution: SIMD2<Float> = .zero
+    // Track-mood tail appended after `resolution` (float2 → 8-byte aligned). Four 4-byte
+    // floats follow naturally; no new padding needed.
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 @MainActor
@@ -105,7 +111,11 @@ public final class FerroRenderer: VisualizerRenderer {
             bass: audio.bass,
             treble: audio.treble,
             spikeCount: Int32(spikeCount),
-            resolution: res
+            resolution: res,
+            valence: audio.valence,
+            energy: audio.energy,
+            danceability: audio.danceability,
+            tempoBPM: audio.tempoBPM
         )
 
         guard let drawable = view.currentDrawable,
