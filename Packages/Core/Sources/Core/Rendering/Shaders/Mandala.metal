@@ -30,14 +30,33 @@ static float3 hsl2rgb(float h, float s, float l) {
     return l + c * (rgb - 0.5);
 }
 
-// Regular-polygon SDF.
-static float sdPolygon(float2 p, int n, float r) {
-    float angle = atan2(p.y, p.x);
-    float dist = length(p);
-    float sector = 2.0 * M_PI_F / float(n);
-    float a = fmod(angle + sector * 0.5 + sector, sector) - sector * 0.5;
-    float inscribed = r * cos(a);
-    return dist - inscribed;
+// TRUE-distance signed distance function for a regular polygon — Iñigo Quilez.
+// https://iquilezles.org/articles/distfunctions2d/
+//
+// The previous `sdPolygon(p, n, r) = length(p) - r*cos(a)` had a zero-level set that
+// passed through each vertex and edge midpoint but BULGED OUTWARD between them —
+// stroking |d| < w rendered a thin band along a CURVE, not a polygon edge. Every
+// "polygon" read as a lobed arc, which is why no amount of line-width tuning ever
+// produced visible corners.
+//
+// This version reduces the point to a single sector via rotational + mirror symmetry,
+// then computes the TRUE perpendicular distance to one edge of the polygon treated
+// as a line segment. The zero-level set IS the regular polygon. Stroke thickness is
+// uniform, corners are sharp, vertices pop.
+static float sdRegularPolygon(float2 p, float r, int n) {
+    float an  = M_PI_F / float(n);
+    float2 acs = float2(cos(an), sin(an));
+
+    // Fold into the half-sector [-an, +an] centered on the nearest edge midpoint.
+    float bn = fmod(atan2(p.x, p.y), 2.0 * an) - an;
+    p = length(p) * float2(cos(bn), abs(sin(bn)));
+
+    // Distance to the edge treated as a line segment from (r*cos(an), -r*sin(an))
+    // to (r*cos(an), +r*sin(an)) — in the folded frame, x = r*cos(an) is the apothem
+    // and y ranges over the segment's half-length.
+    p -= r * acs;
+    p.y += clamp(-p.y, 0.0, r * acs.y);
+    return length(p) * sign(p.x);
 }
 
 static float2 rot2(float2 p, float a) {
@@ -55,8 +74,7 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
     // Fill factor so the mandala grows into the screen's long dimension.
     float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
 
-    // Reference shows crisp hairline neon polygons with a tight halo —
-    // no bloom clouds, no motion trails. Keep line thin and glow narrow.
+    // Hairline neon polygons with a tight halo (reference look).
     float maxR = 0.38 * fillFactor;
     float lineW = 0.0022 + u.bass * 0.0030;
     float haloW = 0.005  + u.bass * 0.007;
@@ -65,8 +83,13 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
     // 6 distinct polygons — triangle, square, pentagon, hexagon, heptagon, octagon.
     const int SIDES[6] = {3, 4, 5, 6, 7, 8};
 
-    float3 accum = float3(0.0);
+    // Alpha-over compositor — each layer paints over earlier ones translucently
+    // (matches Canvas 2D's default source-over blend). Preserves layer identity at
+    // crossings instead of piling up into an additive flower bloom.
+    float4 accum = float4(0.0);
 
+    // Paint from INNER (i=0, smallest polygon) outward. Outer layers overlay inner,
+    // matching the web's draw order.
     for (int i = 0; i < 6; i++) {
         int sides = SIDES[i];
 
@@ -80,20 +103,28 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
         // Distinct hue per layer (web: hue + i*42°).
         float layerHue = fmod(u.hue + float(i) * (42.0 / 360.0), 1.0);
         float3 lineCol = hsl2rgb(layerHue, 1.0, 0.62);
-        float alpha = 0.75 + u.bass * 0.25;
 
-        float d = sdPolygon(p, sides, r);
+        float d = sdRegularPolygon(p, r, sides);
         float absD = abs(d);
 
-        // Sharp hairline core — smoothstep from lineW to 0.1*lineW keeps the line
-        // opaque right up to its edge, so corners read as corners.
+        // Sharp hairline core (smoothstep from lineW → ~0 keeps the line opaque at
+        // its centerline, fading cleanly to nothing past lineW).
         float core = smoothstep(lineW, lineW * 0.1, absD);
-        accum += lineCol * alpha * core;
 
-        // Tight neon halo — narrow and dim so it only suggests a glow.
+        // Tight neon halo — narrow exponential so it suggests glow without blooming
+        // across adjacent layers.
         float glow = exp(-absD / haloW) * 0.32;
-        accum += lineCol * alpha * glow;
+
+        float srcAlpha = (0.75 + u.bass * 0.25) * (core + glow);
+        srcAlpha = clamp(srcAlpha, 0.0, 1.0);
+        float3 srcRGB = lineCol;
+
+        // Standard source-over: out.rgb = src.rgb*src.a + dst.rgb*(1-src.a).
+        accum.rgb = srcRGB * srcAlpha + accum.rgb * (1.0 - srcAlpha);
+        accum.a   = srcAlpha          + accum.a   * (1.0 - srcAlpha);
     }
 
-    return float4(max(accum, float3(0.0)), 1.0);
+    // Drawable is opaque — force full alpha so the BlueHourBackground doesn't bleed
+    // through under the composited mandala.
+    return float4(accum.rgb, 1.0);
 }
