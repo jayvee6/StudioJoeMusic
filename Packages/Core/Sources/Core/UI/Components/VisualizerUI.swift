@@ -8,6 +8,11 @@ public struct VisualizerUI: View {
     @State private var currentMode: VisualizerMode = .bars
     @State private var swipeOffset: CGFloat = 0
 
+    // Transient mode-name overlay state. Shown briefly on launch and on every
+    // mode change, then fades out after a short dwell.
+    @State private var showModeLabel = false
+    @State private var modeLabelTask: Task<Void, Never>?
+
     public init(viewModel: VisualizerViewModel) {
         self.viewModel = viewModel
     }
@@ -19,11 +24,15 @@ public struct VisualizerUI: View {
                 .offset(x: swipeOffset)
             pulsingCircleCanvas
                 .allowsHitTesting(false)
-            hudGlass
+            micBadgeOverlay
+                .allowsHitTesting(false)
+            modeLabelOverlay
                 .allowsHitTesting(false)
             transportGlass
             settingsButton   // floats bottom-right, above everything
         }
+        .onAppear { flashModeLabel() }
+        .onChange(of: currentMode) { _, _ in flashModeLabel() }
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 20)
@@ -148,44 +157,56 @@ public struct VisualizerUI: View {
         }
     }
 
-    private var hudGlass: some View {
+    /// Transient mode-name overlay. Fades in briefly on mode change / first launch,
+    /// then fades back out so it doesn't clutter the visualizer. Implements
+    /// the "only show the label text when you change the visualizer" behavior.
+    private var modeLabelOverlay: some View {
         VStack {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(viewModel.effectiveBPM > 0
-                             ? "\(Int(viewModel.effectiveBPM)) BPM"
-                             : "— BPM")
-                            .font(.system(.title3, design: .rounded, weight: .semibold))
-                            .foregroundStyle(StudioJoeColors.label1)
-                        Text(viewModel.bpmSourceLabel)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(StudioJoeColors.label3)
-                    }
-                    Text(String(format: "bass %.2f · mid %.2f · treble %.2f",
-                                viewModel.bass, viewModel.mid, viewModel.treble))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(StudioJoeColors.label2)
-                    Text(currentMode.title)
-                        .font(.system(.caption2, design: .rounded, weight: .semibold))
-                        .foregroundStyle(StudioJoeColors.label3)
-                        .textCase(.uppercase)
-                        .padding(.top, 2)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .glassEffect(.regular, in: .rect(cornerRadius: 18))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if showModeLabel {
+                Text(currentMode.title.uppercased())
+                    .font(.system(.title2, design: .rounded, weight: .semibold))
+                    .tracking(2)
+                    .foregroundStyle(StudioJoeColors.label1)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 10)
+                    .glassEffect(.regular, in: .capsule)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .padding(.top, 70)
+            }
+            Spacer()
+        }
+    }
 
+    /// Mic badge overlay — only shown when the DRM fallback path is active so the
+    /// user knows analysis is coming from the microphone, not a file tap.
+    private var micBadgeOverlay: some View {
+        VStack {
+            HStack {
+                Spacer()
                 if viewModel.mode == .system {
                     micBadge
+                        .padding(.trailing, 16)
+                        .padding(.top, 12)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-
             Spacer()
+        }
+    }
+
+    private func flashModeLabel() {
+        modeLabelTask?.cancel()
+        withAnimation(.easeOut(duration: 0.25)) {
+            showModeLabel = true
+        }
+        modeLabelTask = Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            if !Task.isCancelled {
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.7)) {
+                        showModeLabel = false
+                    }
+                }
+            }
         }
     }
 
