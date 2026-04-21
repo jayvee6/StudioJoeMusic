@@ -30,11 +30,14 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     int step = int(iid) % STEPS;
 
     // Step normalized to [~0, 1). Web: t = step / 12; radius = minR + (maxR-minR) * t.
-    // minR = shortSide * 0.08, maxR = diagonal * 0.82. On a portrait iPhone, shortSide is W
-    // and diagonal ~= sqrt(W^2 + H^2) ≈ 2.2W, so in short-side units: minR ≈ 0.08, maxR ≈ 0.82.
     float t = float(step) / float(STEPS - 1);
-    float minR = 0.10 * u.scale;
-    float maxR = 0.82 * u.scale;
+
+    // Fill factor so the vortex extends into the long dimension of the screen.
+    float aspect = u.resolution.x / u.resolution.y;
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+
+    float minR = 0.10 * u.scale * fillFactor;
+    float maxR = 0.82 * u.scale * fillFactor;
     float baseRadius = mix(minR, maxR, t);
 
     // Bass-history ripple — each step lags one frame behind the inner one.
@@ -46,7 +49,6 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     float baseAngle = float(arm) * (2.0 * M_PI_F / float(ARMS));
     float angle = baseAngle + radius * u.twist + u.tunnelRot;
 
-    float aspect = u.resolution.x / u.resolution.y;
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 

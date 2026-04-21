@@ -64,10 +64,15 @@ fragment float4 mandala_fs(MVSOut in [[stage_in]],
     float2 uv = in.uv - 0.5;
     if (aspect > 1.0) uv.x *= aspect; else uv.y /= aspect;
 
+    // Fill factor — expands the visualizer into the long dimension of the screen so
+    // portrait doesn't feel like a small centered square. Capped so the outermost
+    // layer doesn't clip off the short side too aggressively.
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+
     float3 color = float3(0.0);
 
-    // Web: 6 layers, maxR = shortSide * 0.38.
-    const float maxR = 0.38;
+    // Web: 6 layers, maxR = shortSide * 0.38. Scaled up by fillFactor for orientation fit.
+    float maxR = 0.38 * fillFactor;
     const int ringCount = 6;
     float radiusScale = 0.40 + u.bass * 0.90;
 

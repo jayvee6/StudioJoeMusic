@@ -39,8 +39,12 @@ fragment float4 hypno_fs(HVSOut in [[stage_in]],
     if (aspect > 1.0) uv.x *= aspect; else uv.y /= aspect;
     float r = length(uv);
 
-    // SPACING in short-side units. Web: 46 px / shortSide ≈ 0.07 at an iPhone portrait viewport.
-    const float spacing = 0.07;
+    // Fill factor so rings extend further into the long dimension.
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+
+    // SPACING in short-side units. Web: 46 px / shortSide ≈ 0.07.
+    // Scaled by fillFactor so we fit roughly the same ring count but sized for the screen.
+    float spacing = 0.07 * fillFactor;
 
     // Ring index at this pixel, accounting for the CPU-integrated offset.
     // Web: R(i) = i*SPACING - ringOffset  ⇒  i = (r + ringOffset)/SPACING

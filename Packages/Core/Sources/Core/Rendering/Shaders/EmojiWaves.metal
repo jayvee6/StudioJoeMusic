@@ -35,9 +35,13 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
     int slot = id - ringStart;
     int perRing = (ring == 0) ? 1 : ring * 6;
 
+    // Fill factor so rings extend into the long dimension of the screen.
+    float aspect = u.resolution.x / u.resolution.y;
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+
     // Radial position — base spacing * ring index, delayed-bass pulse per ring.
     // Web: baseR = (ring+1) * shortSide * 0.09; pulseR = baseR * (1 + delayedBass * 0.45).
-    float baseR = (float(ring) + 1.0) * u.ringScale;
+    float baseR = (float(ring) + 1.0) * u.ringScale * fillFactor;
     int historyIdx = min(ring * 2, 15);
     float delayedBass = bassHistory[historyIdx];
     float pulseMult = 1.0 + delayedBass * 0.45;
@@ -50,7 +54,6 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
         ? ringSpinPhase
         : float(slot) / float(perRing) * 2.0 * M_PI_F + ringSpinPhase;
 
-    float aspect = u.resolution.x / u.resolution.y;
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 

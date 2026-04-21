@@ -7,6 +7,7 @@ struct FerroUniforms {
     float bass;
     float treble;
     int spikeCount;
+    uint _pad0;           // match Swift's explicit pad — documents the 8-byte float2 alignment
     float2 resolution;
 };
 

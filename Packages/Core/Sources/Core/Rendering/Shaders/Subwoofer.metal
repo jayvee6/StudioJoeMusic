@@ -37,13 +37,17 @@ fragment float4 subwoofer_fs(SubVSOut in [[stage_in]],
     if (aspect > 1.0) uv.x *= aspect; else uv.y /= aspect;
     float r = length(uv);
 
+    // Fill factor so the speaker cone grows into the long dimension.
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+
     // Web ring radii on shortSide: frame 0.46, surround 0.43, cone 0.30, cap 0.09.
-    float capR      = 0.085 * (1.0 + u.bass * 0.28);
-    float coneR     = 0.30;
-    float surFlex   = bassHistory[8] * 0.014;
-    float surroundR = 0.38 + surFlex;
-    float basketR   = 0.43;
-    float cabinetR  = 0.46;
+    // All scaled by fillFactor so the speaker fills more of the tall/wide screen.
+    float capR      = 0.085 * fillFactor * (1.0 + u.bass * 0.28);
+    float coneR     = 0.30 * fillFactor;
+    float surFlex   = bassHistory[8] * 0.014 * fillFactor;
+    float surroundR = 0.38 * fillFactor + surFlex;
+    float basketR   = 0.43 * fillFactor;
+    float cabinetR  = 0.46 * fillFactor;
 
     // HSL hues for the web's low-saturation steel / amber palette.
     const float hueSteel  = 210.0 / 360.0;

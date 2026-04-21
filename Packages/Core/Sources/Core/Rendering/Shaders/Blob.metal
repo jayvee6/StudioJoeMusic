@@ -40,7 +40,11 @@ static float3 getNormal(float3 p, float t, float a) {
 
 fragment float4 blob_fs(VSOut in [[stage_in]],
                         constant Uniforms& u [[buffer(0)]]) {
-    float2 uv = (in.uv - 0.5) * float2(u.resolution.x / u.resolution.y, 1.0);
+    float aspect = u.resolution.x / u.resolution.y;
+    // Fill factor — shrinks the ray's xy footprint so the blob fills more of the
+    // long dimension (equivalent to a wider FOV in portrait / narrower in landscape).
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+    float2 uv = (in.uv - 0.5) * float2(aspect, 1.0) / fillFactor;
     float3 ro = float3(0.0, 0.0, 2.2);
     float3 rd = normalize(float3(uv, -1.3));
     float t = 0.0;

@@ -29,7 +29,13 @@ public struct MetalVisualizerView: UIViewRepresentable {
 
     public func updateUIView(_ view: MTKView, context: Context) {
         context.coordinator.viewModel = viewModel
-        context.coordinator.currentMode = mode
+        // Drop the cached renderer for the OLD mode so its state (rot, hue, offset, etc.)
+        // doesn't freeze mid-motion waiting for us to come back. Next time the user
+        // swipes to it, the renderer rebuilds from initialState for a clean entry.
+        if context.coordinator.currentMode != mode {
+            context.coordinator.dropRenderer(for: context.coordinator.currentMode)
+            context.coordinator.currentMode = mode
+        }
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -92,6 +98,12 @@ public struct MetalVisualizerView: UIViewRepresentable {
                 bassHistory: history
             )
             renderer.draw(in: view, audio: audio)
+        }
+
+        /// Drop a cached renderer so its per-mode state resets the next time the user
+        /// swipes back to it. Intended for use from `updateUIView(_:context:)`.
+        func dropRenderer(for mode: VisualizerMode) {
+            renderers.removeValue(forKey: mode)
         }
 
         private func renderer(for mode: VisualizerMode) -> VisualizerRenderer? {

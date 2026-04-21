@@ -38,11 +38,14 @@ fragment float4 spiral_fs(SVSOut in [[stage_in]],
     float r = length(uv);
     float theta = atan2(uv.y, uv.x);
 
+    // Fill factor so the spiral extends further into the long dimension of the screen.
+    float fillFactor = min(1.35, max(aspect, 1.0 / aspect));
+
     // Web: pitch = 50 px on shortSide; our shortSide is 1.0 (unit [-0.5, 0.5]).
-    // 50 / shortSide-in-px ≈ 0.08 for iPhone portrait.
-    const float pitch = 0.08;
+    // Scaled by fillFactor so the spiral fills more of the tall/wide screen.
+    float pitch = 0.08 * fillFactor;
     const float armCount = 2.0;
-    const float armSpacing = pitch / armCount;        // 0.04
+    float armSpacing = pitch / armCount;
 
     // Offset is in pitches (CPU-integrated). For the spiral phase, convert to pitch units.
     float phase = fmod((r / pitch) - u.offset - theta / (2.0 * M_PI_F), 1.0 / armCount);

@@ -59,11 +59,16 @@ public final class InstancedAtlasRenderer<U, State>: VisualizerRenderer {
 
         guard let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor,
-              let cmd = context.commandQueue.makeCommandBuffer(),
-              let enc = cmd.makeRenderCommandEncoder(descriptor: pass)
+              let cmd = context.commandQueue.makeCommandBuffer()
         else { return }
 
+        // Must set clearColor on the pass descriptor BEFORE creating the encoder —
+        // makeRenderCommandEncoder consumes the descriptor and later mutations are
+        // undefined behavior (triggers Metal validation warnings, silently ignored
+        // at runtime).
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
         enc.label = pipeline.label
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentTexture(atlas, index: 0)

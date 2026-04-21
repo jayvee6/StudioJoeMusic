@@ -8,6 +8,11 @@ public struct FerroUniforms {
     public var bass: Float = 0
     public var treble: Float = 0
     public var spikeCount: Int32 = 48
+    // Explicit 4-byte pad — Metal auto-inserts this before `float2 resolution` because
+    // float2 requires 8-byte alignment after the 4-byte int. Swift's SIMD2<Float> has
+    // the same 8-byte alignment and will pad identically, but making the pad explicit
+    // guarantees Swift↔Metal struct layouts match across compiler versions.
+    public var _pad0: UInt32 = 0
     public var resolution: SIMD2<Float> = .zero
 }
 
