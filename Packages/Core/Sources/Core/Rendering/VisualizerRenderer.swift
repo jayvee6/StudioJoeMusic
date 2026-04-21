@@ -11,6 +11,13 @@ public struct AudioFrame {
     public var bpm: Float
     public var magnitudes: [Float]     // per-bin, 0..1; length equals VM.binCount
     public var bassHistory: [Float]    // length 16; [0] = newest, [15] = oldest
+    // Track-level mood metadata (Spotify audio-features or equivalent). Defaults are
+    // chosen so that absent metadata yields visuals identical to the pre-metadata baseline:
+    // all four multipliers/offsets evaluate to 1.0 × base at these values.
+    public var valence: Float          // 0..1; mood. 0 = cool/sad, 1 = warm/happy
+    public var energy: Float           // 0..1; amplitude/saturation multiplier
+    public var danceability: Float     // 0..1; speed/wobble multiplier
+    public var tempoBPM: Float         // beat rate fallback when live BPM is absent
 
     public init(time: Float,
                 bass: Float,
@@ -19,7 +26,11 @@ public struct AudioFrame {
                 beatPulse: Float,
                 bpm: Float,
                 magnitudes: [Float],
-                bassHistory: [Float]) {
+                bassHistory: [Float],
+                valence: Float = 0.5,
+                energy: Float = 0.5,
+                danceability: Float = 0.5,
+                tempoBPM: Float = 120) {
         self.time = time
         self.bass = bass
         self.mid = mid
@@ -28,6 +39,10 @@ public struct AudioFrame {
         self.bpm = bpm
         self.magnitudes = magnitudes
         self.bassHistory = bassHistory
+        self.valence = valence
+        self.energy = energy
+        self.danceability = danceability
+        self.tempoBPM = tempoBPM
     }
 }
 

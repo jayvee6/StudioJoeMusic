@@ -7,6 +7,11 @@ struct HypnoUniforms {
     float hue;           // 0..1, CPU-accumulated
     float bass;
     float2 resolution;
+    // Track-mood tail — matches Swift HypnoUniforms field order.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct HVSOut {
@@ -59,8 +64,12 @@ fragment float4 hypno_fs(HVSOut in [[stage_in]],
     int parityInt = (ringIdx + int(u.colorShift) + 1024) & 1;
 
     // Web: light stripe = hsl(0, 0%, 82 + delayedBass * 18%); dark stripe = hsl(hue, 100%, 15 + bass*30%).
+    // Valence biases hue warm/cool; energy scales saturation. Neutral 0.5 → 0.85 saturation
+    // (slightly off legacy 1.0 — trading a touch of pop for mood expression at extremes).
     float3 light = hsl2rgb(0.0, 0.0, 0.82 + delayedBass * 0.18);
-    float3 dark  = hsl2rgb(u.hue, 1.0, 0.15 + u.bass * 0.30);
+    float darkHue = u.hue + (u.valence - 0.5) * 0.2;
+    darkHue -= floor(darkHue);
+    float3 dark  = hsl2rgb(darkHue, 0.7 + u.energy * 0.3, 0.15 + u.bass * 0.30);
 
     // Anti-alias the stripe edges a bit.
     float localPhase = fract(ringR);

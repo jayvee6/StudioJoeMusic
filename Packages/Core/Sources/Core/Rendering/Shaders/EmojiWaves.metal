@@ -8,6 +8,11 @@ struct WavesUniforms {
     float ringScale;      // base ring spacing
     float2 resolution;
     float2 atlasGrid;
+    // Track-mood tail — matches Swift WavesUniforms field order.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct WVSOut {
@@ -41,10 +46,12 @@ vertex WVSOut waves_vs(uint vid [[vertex_id]],
 
     // Radial position — base spacing * ring index, delayed-bass pulse per ring.
     // Web: baseR = (ring+1) * shortSide * 0.09; pulseR = baseR * (1 + delayedBass * 0.45).
+    // Energy scales the bass-driven outward pulse. Neutral 0.5 → 1.0.
+    float energyMul = 0.6 + u.energy * 0.8;
     float baseR = (float(ring) + 1.0) * u.ringScale * fillFactor;
     int historyIdx = min(ring * 2, 15);
     float delayedBass = bassHistory[historyIdx];
-    float pulseMult = 1.0 + delayedBass * 0.45;
+    float pulseMult = 1.0 + delayedBass * 0.45 * energyMul;
     float radius = (ring == 0) ? 0.0 : baseR * pulseMult;
 
     // Angular position — alternating spin direction per ring (web's ring i spins i%2 parity).

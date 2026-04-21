@@ -7,6 +7,12 @@ public struct BlobUniforms {
     public var time: Float = 0
     public var audio: Float = 0
     public var resolution: SIMD2<Float> = .zero
+    // Track-mood tail — added AFTER the trailing float2 so Swift/Metal alignment
+    // stays 4-byte-safe (4 floats slot into the 16-byte region after `resolution`).
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 public struct MandalaUniforms {
@@ -15,6 +21,10 @@ public struct MandalaUniforms {
     public var bass: Float = 0
     public var treble: Float = 0
     public var resolution: SIMD2<Float> = .zero
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 public struct HypnoUniforms {
@@ -23,6 +33,10 @@ public struct HypnoUniforms {
     public var hue: Float = 0
     public var bass: Float = 0
     public var resolution: SIMD2<Float> = .zero
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 public struct SpiralUniforms {
@@ -31,6 +45,10 @@ public struct SpiralUniforms {
     public var bass: Float = 0
     public var treble: Float = 0
     public var resolution: SIMD2<Float> = .zero
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 public struct SubwooferUniforms {
@@ -38,6 +56,10 @@ public struct SubwooferUniforms {
     public var bass: Float = 0
     public var beatPulse: Float = 0
     public var resolution: SIMD2<Float> = .zero
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 public struct VortexUniforms {
@@ -49,6 +71,10 @@ public struct VortexUniforms {
     public var rippleAmp: Float = 0.06
     public var resolution: SIMD2<Float> = .zero
     public var atlasGrid: SIMD2<Float> = .init(4, 3)
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 public struct WavesUniforms {
@@ -58,6 +84,10 @@ public struct WavesUniforms {
     public var ringScale: Float = 0.13
     public var resolution: SIMD2<Float> = .zero
     public var atlasGrid: SIMD2<Float> = .init(4, 3)
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
 }
 
 // MARK: - State structs
@@ -111,7 +141,15 @@ public enum VisualizerFactory {
             initialState: ()
         ) { _, a, _, res in
             let audio = min(1.0, a.bass * 0.75 + a.beatPulse * 0.45)
-            return BlobUniforms(time: a.time, audio: audio, resolution: res)
+            return BlobUniforms(
+                time: a.time,
+                audio: audio,
+                resolution: res,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
+            )
         }
     }
 
@@ -135,7 +173,11 @@ public enum VisualizerFactory {
                 hue: state.hue,
                 bass: a.bass,
                 treble: a.treble,
-                resolution: res
+                resolution: res,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
             )
         }
     }
@@ -164,7 +206,11 @@ public enum VisualizerFactory {
                 colorShift: state.colorShift,
                 hue: state.hue,
                 bass: a.bass,
-                resolution: res
+                resolution: res,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
             )
         }
     }
@@ -187,7 +233,11 @@ public enum VisualizerFactory {
                 hue: state.hue,
                 bass: a.bass,
                 treble: a.treble,
-                resolution: res
+                resolution: res,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
             )
         }
     }
@@ -200,7 +250,16 @@ public enum VisualizerFactory {
             label: "Subwoofer",
             initialState: ()
         ) { _, a, _, res in
-            SubwooferUniforms(time: a.time, bass: a.bass, beatPulse: a.beatPulse, resolution: res)
+            SubwooferUniforms(
+                time: a.time,
+                bass: a.bass,
+                beatPulse: a.beatPulse,
+                resolution: res,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
+            )
         }
     }
 
@@ -241,7 +300,11 @@ public enum VisualizerFactory {
                 scale: state.smoothScale,
                 rippleAmp: 0.060,
                 resolution: res,
-                atlasGrid: grid
+                atlasGrid: grid,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
             )
         }
     }
@@ -267,7 +330,11 @@ public enum VisualizerFactory {
                 treble: a.treble,
                 ringScale: 0.13,
                 resolution: res,
-                atlasGrid: grid
+                atlasGrid: grid,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
             )
         }
     }

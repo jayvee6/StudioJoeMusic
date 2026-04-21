@@ -10,6 +10,11 @@ struct VortexUniforms {
     float rippleAmp;       // how far bass-history ripple displaces each step
     float2 resolution;
     float2 atlasGrid;
+    // Track-mood tail — matches Swift VortexUniforms field order.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct VVSOut {
@@ -45,9 +50,11 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     float delayedBass = bassHistory[historyIdx];
     float radius = baseRadius + delayedBass * u.rippleAmp;
 
-    // Phyllotaxis arm layout + CPU-integrated tunnel rotation.
+    // Phyllotaxis arm layout + CPU-integrated tunnel rotation. Danceability
+    // scales the accumulated tunnel rotation — neutral 0.5 → 1.0 (baseline).
+    float danceMul = 0.7 + u.danceability * 0.6;
     float baseAngle = float(arm) * (2.0 * M_PI_F / float(ARMS));
-    float angle = baseAngle + radius * u.twist + u.tunnelRot;
+    float angle = baseAngle + radius * u.twist + u.tunnelRot * danceMul;
 
     float2 center_world = float2(cos(angle), sin(angle)) * radius;
     float2 center_clip = float2(center_world.x / aspect, center_world.y);

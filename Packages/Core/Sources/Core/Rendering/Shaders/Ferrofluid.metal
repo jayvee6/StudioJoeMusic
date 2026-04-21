@@ -9,6 +9,12 @@ struct FerroUniforms {
     int spikeCount;
     uint _pad0;           // match Swift's explicit pad — documents the 8-byte float2 alignment
     float2 resolution;
+    // Track-mood tail — matches Swift FerroUniforms field order. Four plain floats
+    // after the float2 pack without further padding.
+    float valence;
+    float energy;
+    float danceability;
+    float tempoBPM;
 };
 
 struct FerroVSOut {
@@ -60,7 +66,9 @@ fragment float4 ferrofluid_fs(FerroVSOut in [[stage_in]],
     surface = max(surface, valley);
 
     float poolY = 0.04;
-    float maxH = 0.55;
+    // Energy scales the maximum spike height — amp of displacement. Neutral 0.5 → 1.0.
+    float energyMul = 0.6 + u.energy * 0.8;
+    float maxH = 0.55 * energyMul;
     float surfaceY = poolY + surface * maxH;
     float pixelY = uv.y;
 
@@ -84,10 +92,12 @@ fragment float4 ferrofluid_fs(FerroVSOut in [[stage_in]],
         body = mix(body, bodyHigh, smoothstep(0.55, 1.0, tNorm));
 
         // Specular streak on left face, colored per web: HSL(hue, 60-80%, 42-88%).
+        // Valence brightens gloss on happy tracks, mutes it on sad ones. Neutral 0.5 → 1.0.
+        float valenceMul = 0.8 + u.valence * 0.4;
         float phase = spikeX - floor(spikeX);
         float leftFace = smoothstep(0.45, 0.05, phase);
         float upperHalf = smoothstep(0.40, 0.92, tNorm);
-        float specAmount = leftFace * upperHalf * (0.55 + u.bass * 0.35);
+        float specAmount = leftFace * upperHalf * (0.55 + u.bass * 0.35) * valenceMul;
         float specL = 0.50 + u.bass * 0.30;
         float3 specColor = hsl2rgb(u.hue, 0.65, specL);
         body = mix(body, specColor, specAmount);

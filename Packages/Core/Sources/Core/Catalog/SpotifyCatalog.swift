@@ -67,6 +67,31 @@ public actor SpotifyCatalog {
         return result.tracks.items
     }
 
+    public func searchByISRC(_ isrc: String) async throws -> SpotifyTrack? {
+        struct SearchResult: Decodable { let tracks: TrackPage }
+        struct TrackPage: Decodable { let items: [SpotifyTrack] }
+        var comps = URLComponents(string: "https://api.spotify.com/v1/search")!
+        comps.queryItems = [
+            .init(name: "q", value: "isrc:\(isrc)"),
+            .init(name: "type", value: "track"),
+            .init(name: "limit", value: "1"),
+            .init(name: "market", value: "from_token")
+        ]
+        do {
+            let result: SearchResult = try await getJSON(url: comps.url!)
+            let hit = result.tracks.items.first
+            log.info("spotify isrc search \(isrc, privacy: .public): \(hit?.id ?? "no-match", privacy: .public)")
+            return hit
+        } catch {
+            let ns = error as NSError
+            if ns.code == 404 {
+                log.info("spotify isrc search \(isrc, privacy: .public): 404 no-match")
+                return nil
+            }
+            throw error
+        }
+    }
+
     public func audioFeatures(trackID: String) async throws -> TrackFeatures {
         struct AudioFeaturesPayload: Decodable {
             let tempo: Double?
