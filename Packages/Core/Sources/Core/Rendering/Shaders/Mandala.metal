@@ -48,12 +48,19 @@ static float sdRegularPolygon(float2 p, float r, int n) {
     float2 acs = float2(cos(an), sin(an));
 
     // Fold into the half-sector [-an, +an] centered on the nearest edge midpoint.
-    float bn = fmod(atan2(p.x, p.y), 2.0 * an) - an;
+    //
+    // GLSL's mod() returns values in [0, y) for positive y; Metal's fmod() can
+    // return negatives when the dividend is negative. atan2 returns values in
+    // [-π, π], so without normalization the fold was incorrect for points in the
+    // left half of the coord system — entire edges of the polygon went undrawn.
+    // Normalize to a positive angle first so the fold lands in [-an, +an].
+    float theta = atan2(p.x, p.y);
+    if (theta < 0.0) theta += 2.0 * M_PI_F;
+    float bn = fmod(theta, 2.0 * an) - an;
     p = length(p) * float2(cos(bn), abs(sin(bn)));
 
-    // Distance to the edge treated as a line segment from (r*cos(an), -r*sin(an))
-    // to (r*cos(an), +r*sin(an)) — in the folded frame, x = r*cos(an) is the apothem
-    // and y ranges over the segment's half-length.
+    // Distance to the edge treated as a line segment. In the folded frame,
+    // x = r*cos(an) is the apothem, y ranges over the segment's half-length.
     p -= r * acs;
     p.y += clamp(-p.y, 0.0, r * acs.y);
     return length(p) * sign(p.x);
