@@ -85,7 +85,7 @@ public enum VisualizerFactory {
         switch mode {
         case .bars: return nil
         case .blob: return try makeBlob(context: context, pixelFormat: pixelFormat)
-        case .mandala: return try makeMandala(context: context, pixelFormat: pixelFormat)
+        case .mandala: return try MandalaRenderer(context: context, pixelFormat: pixelFormat)
         case .hypnoRings: return try makeHypno(context: context, pixelFormat: pixelFormat)
         case .spiral: return try makeSpiral(context: context, pixelFormat: pixelFormat)
         case .subwoofer: return try makeSubwoofer(context: context, pixelFormat: pixelFormat)
@@ -115,19 +115,22 @@ public enum VisualizerFactory {
         }
     }
 
-    private static func makeMandala(context: MetalContext,
-                                    pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+    // Mandala is routed directly to MandalaRenderer (framebuffer-feedback trails).
+    // This legacy single-pass factory is kept only so the old shader entry points
+    // stay referenced and the build doesn't strip them — can be deleted once we
+    // confirm the feedback path is the keeper.
+    private static func makeMandalaLegacy(context: MetalContext,
+                                          pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
         try FragmentRenderer<MandalaUniforms, MandalaState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "mandala_vs", fragmentFunction: "mandala_fs",
-            label: "Mandala",
+            label: "MandalaLegacy",
             initialState: MandalaState()
         ) { state, a, dt, res in
-            // Web's per-frame integrators at 60 fps: rot += 0.004 + treble*0.06; hue += 0.4 + treble*2.5.
             let normDt = dt * 60.0
             state.rot += (0.004 + a.treble * 0.06) * normDt
             var newHue = state.hue + (0.4 + a.treble * 2.5) * normDt / 360.0
-            newHue -= floor(newHue)                    // wrap into [0, 1)
+            newHue -= floor(newHue)
             state.hue = newHue
             return MandalaUniforms(
                 rot: state.rot,
