@@ -23,9 +23,11 @@ vertex MTVSOut mandala_fs_trail_vs(uint vid [[vertex_id]]) {
 
 // ── Pass 1: alpha wash ─────────────────────────────────────────────────────
 fragment float4 mandala_fs_trail_fade_fs(MTVSOut in [[stage_in]]) {
-    // Pipeline blend = (srcAlpha, 1-srcAlpha). With src = (0,0,0,0.18) the
-    // destination is multiplied by 0.82 each frame → ghosts fade exponentially.
-    return float4(0.0, 0.0, 0.0, 0.18);
+    // Pipeline blend = (srcAlpha, 1-srcAlpha). With src = (0,0,0,0.10) the
+    // destination is multiplied by 0.90 each frame → ghosts persist ~15 frames
+    // instead of ~5. Long enough that rotating polygon edges light every angular
+    // sector before the previous pass fades away, so there are no dark wedges.
+    return float4(0.0, 0.0, 0.0, 0.10);
 }
 
 // ── Pass 3: blit ───────────────────────────────────────────────────────────
@@ -85,8 +87,8 @@ fragment float4 mandala_fs_trail_draw_fs(MTVSOut in [[stage_in]],
     // trails handle the "dancing" motion, bloom adds just enough neon warmth without
     // hiding the geometry.
     float maxR = 0.38 * fillFactor;
-    float lineW = 0.005 + u.bass * 0.008;
-    float haloW = 0.008 + u.bass * 0.015;           // much narrower than before
+    float lineW = 0.0065 + u.bass * 0.010;
+    float haloW = 0.010 + u.bass * 0.018;
     float radiusScale = 0.40 + u.bass * 0.90;
 
     // 6 distinct polygons — triangle, square, pentagon, hex, hept, oct.
