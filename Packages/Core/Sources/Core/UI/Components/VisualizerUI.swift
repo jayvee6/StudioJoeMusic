@@ -223,41 +223,81 @@ public struct VisualizerUI: View {
     }
 
     private var transportGlass: some View {
-        VStack {
+        VStack(spacing: 10) {
             Spacer()
-            GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
-                    Button {
-                        showPicker = true
-                    } label: {
-                        Label("Library", systemImage: "music.note.list")
-                            .font(.system(.body, weight: .semibold))
-                            .padding(.horizontal, 4)
-                    }
-                    .buttonStyle(.glassProminent)
+            progressRow
+                .padding(.horizontal, 18)
+            sourceRow
+            playbackRow
+                .padding(.bottom, 28)
+        }
+    }
 
-                    Button {
-                        showSpotify = true
-                    } label: {
-                        Label("Spotify", systemImage: "music.note.house")
-                            .font(.system(.body, weight: .semibold))
-                            .padding(.horizontal, 4)
-                    }
-                    .buttonStyle(.glass)
-
-                    Button {
-                        viewModel.togglePlayPause()
-                    } label: {
-                        Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title2)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(viewModel.mode == .idle)
-                }
+    private var progressRow: some View {
+        VStack(spacing: 2) {
+            ProgressScrubBar(
+                position: viewModel.positionSec,
+                duration: viewModel.durationSec,
+                onSeek: { viewModel.seek(to: $0) }
+            )
+            HStack {
+                Text(Self.formatTime(viewModel.positionSec))
+                Spacer()
+                Text(viewModel.durationSec > 0
+                     ? Self.formatTime(viewModel.durationSec)
+                     : "—")
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 28)
+            .font(.system(.caption2, design: .monospaced))
+            .foregroundStyle(StudioJoeColors.label3)
+        }
+        .opacity(viewModel.durationSec > 0 ? 1 : 0.35)
+    }
+
+    private var sourceRow: some View {
+        HStack(spacing: 10) {
+            Button { showPicker = true } label: {
+                Label("Library", systemImage: "music.note.list")
+                    .font(.system(.footnote, weight: .semibold))
+                    .padding(.horizontal, 2)
+            }
+            .buttonStyle(.glassProminent)
+
+            Button { showSpotify = true } label: {
+                Label("Spotify", systemImage: "music.note.house")
+                    .font(.system(.footnote, weight: .semibold))
+                    .padding(.horizontal, 2)
+            }
+            .buttonStyle(.glass)
+        }
+    }
+
+    private var playbackRow: some View {
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 16) {
+                Button { viewModel.rewind() } label: {
+                    Image(systemName: "gobackward.10")
+                        .font(.title2)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.glass)
+                .disabled(viewModel.mode == .idle)
+
+                Button { viewModel.togglePlayPause() } label: {
+                    Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title)
+                        .frame(width: 46, height: 46)
+                }
+                .buttonStyle(.glassProminent)
+                .disabled(viewModel.mode == .idle)
+
+                Button { viewModel.fastForward() } label: {
+                    Image(systemName: "goforward.10")
+                        .font(.title2)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.glass)
+                .disabled(viewModel.mode == .idle)
+            }
         }
     }
 
@@ -268,5 +308,65 @@ public struct VisualizerUI: View {
         guard let current = all.firstIndex(of: currentMode) else { return }
         let next = (current + delta + all.count) % all.count
         currentMode = all[next]
+    }
+
+    // MARK: - Helpers
+
+    private static func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds)
+        let mins = total / 60
+        let secs = total % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+}
+
+/// Scrubable progress bar — shows `position` relative to `duration`. Tap or drag
+/// anywhere along the bar to seek. Invokes `onSeek(seconds)` on drag end.
+private struct ProgressScrubBar: View {
+    let position: Double
+    let duration: Double
+    let onSeek: (Double) -> Void
+
+    @State private var isScrubbing = false
+    @State private var scrubFraction: Double = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let progress = duration > 0
+                ? (isScrubbing ? scrubFraction : min(1, max(0, position / duration)))
+                : 0
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(StudioJoeColors.label3.opacity(0.45))
+                Capsule()
+                    .fill(StudioJoeColors.accent)
+                    .frame(width: max(0, geo.size.width * progress))
+                Circle()
+                    .fill(StudioJoeColors.accent)
+                    .frame(width: isScrubbing ? 14 : 10,
+                           height: isScrubbing ? 14 : 10)
+                    .offset(x: max(0, geo.size.width * progress) - 6)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.8),
+                               value: isScrubbing)
+            }
+            .frame(height: 4)
+            .contentShape(Rectangle().inset(by: -10))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard duration > 0 else { return }
+                        isScrubbing = true
+                        scrubFraction = min(1, max(0, value.location.x / geo.size.width))
+                    }
+                    .onEnded { value in
+                        guard duration > 0 else { return }
+                        let f = min(1, max(0, value.location.x / geo.size.width))
+                        isScrubbing = false
+                        onSeek(f * duration)
+                    }
+            )
+        }
+        .frame(height: 18)   // hit area
     }
 }

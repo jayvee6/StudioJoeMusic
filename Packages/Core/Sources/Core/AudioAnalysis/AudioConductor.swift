@@ -35,6 +35,11 @@ public final class AudioConductor: @unchecked Sendable {
     private var positionTimer: Timer?
     private var stateObserver: NSObjectProtocol?
     private var nowPlayingObserver: NSObjectProtocol?
+    // Running offset (in audio frames) of the currently-scheduled segment's start.
+    // 0 when the whole file was just scheduled via scheduleFile; non-zero after seek()
+    // re-queues with scheduleSegment from a different startFrame. Used to convert the
+    // player node's local sampleTime back to absolute playback position.
+    private var seekBaseFrames: AVAudioFramePosition = 0
 
     private enum TapKind { case none, mixer, mic }
 
@@ -137,12 +142,55 @@ public final class AudioConductor: @unchecked Sendable {
         }
         positionTimer?.invalidate()
         positionTimer = nil
+        seekBaseFrames = 0
         bpm.reset()
         cleanupTempFile()
         DispatchQueue.main.async {
             self.isPlaying = false
             self.positionSec = 0
         }
+    }
+
+    /// Seek to an absolute position. Clamped to [0, durationSec].
+    /// - file mode: stops the player, re-schedules a segment starting at the target
+    ///   frame, and restarts playback if it was already playing.
+    /// - system mode: sets `MPMusicPlayerController.currentPlaybackTime`.
+    public func seek(to seconds: Double) {
+        let target = max(0, min(seconds, max(0.01, durationSec)))
+        switch mode {
+        case .file:
+            guard let file = audioFile else { return }
+            let sr = file.processingFormat.sampleRate
+            let startFrame = AVAudioFramePosition(target * sr)
+            let remaining = AVAudioFrameCount(max(0, file.length - startFrame))
+            if remaining == 0 { return }
+            let wasPlaying = isPlaying
+            player.stop()
+            seekBaseFrames = startFrame
+            player.scheduleSegment(file,
+                                   startingFrame: startFrame,
+                                   frameCount: remaining,
+                                   at: nil) { [weak self] in
+                DispatchQueue.main.async { self?.isPlaying = false }
+            }
+            bpm.reset()
+            if wasPlaying {
+                player.play()
+            }
+        case .system:
+            systemPlayer.currentPlaybackTime = target
+        case .idle:
+            return
+        }
+        DispatchQueue.main.async { self.positionSec = target }
+    }
+
+    public func rewind(by seconds: Double = 10) {
+        seek(to: positionSec - seconds)
+    }
+
+    public func fastForward(by seconds: Double = 10) {
+        seek(to: positionSec + seconds)
     }
 
     // MARK: - File mode (owned tracks)
@@ -176,6 +224,7 @@ public final class AudioConductor: @unchecked Sendable {
         }
 
         player.stop()
+        seekBaseFrames = 0
         player.scheduleFile(file, at: nil) { [weak self] in
             DispatchQueue.main.async { self?.isPlaying = false }
         }
@@ -269,9 +318,13 @@ public final class AudioConductor: @unchecked Sendable {
             case .system:
                 pos = self.systemPlayer.currentPlaybackTime
             case .file:
+                // Add seekBaseFrames-derived offset so the position is absolute:
+                // after a seek(), scheduleSegment resets the node's sampleTime to 0,
+                // so we need to add the segment's starting frame back in.
                 if let nodeTime = self.player.lastRenderTime,
                    let p = self.player.playerTime(forNodeTime: nodeTime) {
-                    pos = Double(p.sampleTime) / p.sampleRate
+                    let baseSec = Double(self.seekBaseFrames) / p.sampleRate
+                    pos = baseSec + Double(p.sampleTime) / p.sampleRate
                 } else {
                     pos = self.positionSec
                 }

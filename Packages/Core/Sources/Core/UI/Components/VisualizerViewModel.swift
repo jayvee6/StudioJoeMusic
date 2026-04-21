@@ -128,6 +128,10 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
 
     public func stop() { conductor.stop() }
 
+    public func seek(to seconds: Double) { conductor.seek(to: seconds) }
+    public func rewind(by seconds: Double = 10) { conductor.rewind(by: seconds) }
+    public func fastForward(by seconds: Double = 10) { conductor.fastForward(by: seconds) }
+
     public var isPlaying: Bool { conductor.isPlaying }
     public var positionSec: Double { conductor.positionSec }
     public var durationSec: Double { conductor.durationSec }
