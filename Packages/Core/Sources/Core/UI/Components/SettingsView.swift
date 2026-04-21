@@ -78,14 +78,14 @@ public struct SettingsView: View {
         } header: {
             Text("Audio Reactivity")
         } footer: {
-            Text("When on, Spotify tracks drive the visualizer from Spotify's pre-computed beat + loudness analysis instead of the mic. Mic is used only as a last-resort fallback for DRM Apple Music tracks playing on speakers.")
+            Text("When on, Spotify tracks (and Apple Music tracks with an ISRC match) drive the visualizer from Spotify's pre-computed beat + loudness analysis. Other tracks fall back to live FFT on the audio file — or stay gently animated when there's nothing to tap.")
         }
         .listRowBackground(Color.white.opacity(0.06))
     }
 
     private var analysisStatusText: String {
         if !viewModel.preferSyntheticAnalysis {
-            return "Off — using live FFT from file mixer or mic"
+            return "Off — using live FFT from the audio file"
         }
         return "Spotify tracks use pre-computed analysis; others fall back to tap"
     }
@@ -162,7 +162,7 @@ public struct SettingsView: View {
         } header: {
             Text("Apple Music")
         } footer: {
-            Text("Lets the picker browse the songs in your library. Apple Music subscription downloads fall back to system playback with a live mic tap for visualization.")
+            Text("Lets the picker browse the songs in your library. Subscription downloads play through the system player; visuals react via Spotify analysis when available, or stay gently animated otherwise.")
         }
         .listRowBackground(Color.white.opacity(0.06))
     }

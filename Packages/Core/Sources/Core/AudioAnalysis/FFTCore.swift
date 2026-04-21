@@ -21,6 +21,14 @@ public final class FFTCore: @unchecked Sendable {
     // each entry is an index into the FFT magnitude array (0 ..< fftSize/2).
     private let melBoundaries: [Int]
 
+    // Perceptual gain curve: boosts high-frequency bins to compensate for
+    // mel-scale bass concentration and typical music's bass-heavy amplitude.
+    // Computed once at init, applied per-frame in process() BEFORE AGC so
+    // the boosted signal shapes the peakFloor envelope.
+    // gain[b] = 1.0 + pow(normalized_position, 1.3) * 2.5
+    // At b=0 -> 1.0x, at b=binCount/2 -> ~2.0x, at b=binCount-1 -> ~3.5x.
+    private let binGain: [Float]
+
     // Exponential-decay peak tracker for AGC normalization. Persists across frames.
     // Decays at ~0.995/frame (≈3 s half-life at 86 fps) so the floor drops slowly
     // when input goes quiet; jumps instantly to new peaks.
@@ -49,6 +57,7 @@ public final class FFTCore: @unchecked Sendable {
 
         self.melBoundaries = FFTCore.computeMelBoundaries(fftSize: fftSize,
                                                           binCount: binCount)
+        self.binGain = FFTCore.computeBinGain(binCount: binCount)
     }
 
     deinit { vDSP_destroy_fftsetup(fftSetup) }
@@ -99,6 +108,16 @@ public final class FFTCore: @unchecked Sendable {
                 var avg: Float = 0
                 vDSP_meanv(mPtr.baseAddress! + lo, 1, &avg, vDSP_Length(hi - lo))
                 binned[b] = sqrtf(avg)
+            }
+        }
+
+        // Apply perceptual gain curve — treble gets a progressive boost so high bins
+        // carry visible amplitude in typical (bass-heavy) music. Must run BEFORE the
+        // peakFloor / AGC normalization so the boosted signal shapes the envelope.
+        binned.withUnsafeMutableBufferPointer { bPtr in
+            binGain.withUnsafeBufferPointer { gPtr in
+                vDSP_vmul(bPtr.baseAddress!, 1, gPtr.baseAddress!, 1,
+                          bPtr.baseAddress!, 1, vDSP_Length(binCount))
             }
         }
 
@@ -164,5 +183,16 @@ public final class FFTCore: @unchecked Sendable {
 
     private static func melToHz(_ mel: Float) -> Float {
         700.0 * (powf(10.0, mel / 2595.0) - 1.0)
+    }
+
+    // MARK: - Perceptual gain helpers
+
+    private static func computeBinGain(binCount: Int) -> [Float] {
+        var gains = [Float](repeating: 1.0, count: binCount)
+        for b in 0..<binCount {
+            let t = Float(b) / Float(max(1, binCount - 1))
+            gains[b] = 1.0 + powf(t, 1.3) * 2.5
+        }
+        return gains
     }
 }

@@ -24,8 +24,6 @@ public struct VisualizerUI: View {
                 .offset(x: swipeOffset)
             pulsingCircleCanvas
                 .allowsHitTesting(false)
-            micBadgeOverlay
-                .allowsHitTesting(false)
             modeLabelOverlay
                 .allowsHitTesting(false)
             transportGlass
@@ -177,22 +175,6 @@ public struct VisualizerUI: View {
         }
     }
 
-    /// Mic badge overlay — only shown when the DRM fallback path is active so the
-    /// user knows analysis is coming from the microphone, not a file tap.
-    private var micBadgeOverlay: some View {
-        VStack {
-            HStack {
-                Spacer()
-                if viewModel.mode == .system {
-                    micBadge
-                        .padding(.trailing, 16)
-                        .padding(.top, 12)
-                }
-            }
-            Spacer()
-        }
-    }
-
     private func flashModeLabel() {
         modeLabelTask?.cancel()
         withAnimation(.easeOut(duration: 0.25)) {
@@ -225,16 +207,6 @@ public struct VisualizerUI: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .glassEffect(.regular, in: .capsule)
-    }
-
-    private var micBadge: some View {
-        Label("Live mic", systemImage: "mic.fill")
-            .font(.system(.caption, design: .rounded, weight: .semibold))
-            .foregroundStyle(StudioJoeColors.label1)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .glassEffect(.regular.tint(StudioJoeColors.accent.opacity(0.35)),
-                         in: .capsule)
     }
 
     /// Single glass card at the bottom of the screen containing every playback
