@@ -166,14 +166,6 @@ public struct VisualizerUI: View {
                                 viewModel.bass, viewModel.mid, viewModel.treble))
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(StudioJoeColors.label2)
-                    if let title = viewModel.currentTitle {
-                        Text(viewModel.currentArtist?.isEmpty == false
-                             ? "\(title) — \(viewModel.currentArtist!)"
-                             : title)
-                            .font(.system(.caption, weight: .medium))
-                            .foregroundStyle(StudioJoeColors.label2)
-                            .lineLimit(1)
-                    }
                     Text(currentMode.title)
                         .font(.system(.caption2, design: .rounded, weight: .semibold))
                         .foregroundStyle(StudioJoeColors.label3)
@@ -194,9 +186,6 @@ public struct VisualizerUI: View {
             .padding(.top, 12)
 
             Spacer()
-
-            modeIndicator
-                .padding(.bottom, 100)
         }
     }
 
@@ -227,36 +216,54 @@ public struct VisualizerUI: View {
                          in: .capsule)
     }
 
+    /// Single glass card at the bottom of the screen containing every playback
+    /// control — modeled on the web prototype's transport pill. Holds track info,
+    /// progress + scrub bar, source buttons, transport buttons, and the mode
+    /// indicator all in one container so everything reads as a cohesive surface.
     private var transportGlass: some View {
-        VStack(spacing: 10) {
+        VStack {
             Spacer()
-            progressRow
-                .padding(.horizontal, 18)
-            sourceRow
-            playbackRow
-                .padding(.bottom, 28)
+            VStack(spacing: 12) {
+                trackInfoRow
+                progressRow
+                transportRow
+                modeIndicator
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 26))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 28)
         }
     }
 
-    private var settingsButton: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                Button { showSettings = true } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.title2)
-                        .frame(width: 34, height: 34)
+    private var trackInfoRow: some View {
+        HStack {
+            if let title = viewModel.currentTitle {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(.subheadline, weight: .semibold))
+                        .foregroundStyle(StudioJoeColors.label1)
+                        .lineLimit(1)
+                    if let artist = viewModel.currentArtist, !artist.isEmpty {
+                        Text(artist)
+                            .font(.system(.caption, weight: .medium))
+                            .foregroundStyle(StudioJoeColors.label2)
+                            .lineLimit(1)
+                    }
                 }
-                .buttonStyle(.glass)
-                .padding(.trailing, 18)
-                .padding(.bottom, 34)
+            } else {
+                Text("No track loaded")
+                    .font(.system(.subheadline, weight: .medium))
+                    .foregroundStyle(StudioJoeColors.label3)
             }
+            Spacer()
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var progressRow: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 4) {
             ProgressScrubBar(
                 position: viewModel.positionSec,
                 duration: viewModel.durationSec,
@@ -275,31 +282,24 @@ public struct VisualizerUI: View {
         .opacity(viewModel.durationSec > 0 ? 1 : 0.35)
     }
 
-    private var sourceRow: some View {
-        HStack(spacing: 10) {
-            Button { showPicker = true } label: {
-                Label("Library", systemImage: "music.note.list")
-                    .font(.system(.footnote, weight: .semibold))
-                    .padding(.horizontal, 2)
-            }
-            .buttonStyle(.glassProminent)
+    /// Library / rewind / play / fast-forward / Spotify — all in one row.
+    /// Sources on the edges, transport controls centered.
+    private var transportRow: some View {
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                Button { showPicker = true } label: {
+                    Image(systemName: "music.note.list")
+                        .font(.title3)
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.glass)
 
-            Button { showSpotify = true } label: {
-                Label("Spotify", systemImage: "music.note.house")
-                    .font(.system(.footnote, weight: .semibold))
-                    .padding(.horizontal, 2)
-            }
-            .buttonStyle(.glass)
-        }
-    }
+                Spacer(minLength: 0)
 
-    private var playbackRow: some View {
-        GlassEffectContainer(spacing: 12) {
-            HStack(spacing: 16) {
                 Button { viewModel.rewind() } label: {
                     Image(systemName: "gobackward.10")
                         .font(.title2)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.glass)
                 .disabled(viewModel.mode == .idle)
@@ -307,7 +307,7 @@ public struct VisualizerUI: View {
                 Button { viewModel.togglePlayPause() } label: {
                     Image(systemName: viewModel.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title)
-                        .frame(width: 46, height: 46)
+                        .frame(width: 52, height: 52)
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(viewModel.mode == .idle)
@@ -315,10 +315,38 @@ public struct VisualizerUI: View {
                 Button { viewModel.fastForward() } label: {
                     Image(systemName: "goforward.10")
                         .font(.title2)
-                        .frame(width: 34, height: 34)
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.glass)
                 .disabled(viewModel.mode == .idle)
+
+                Spacer(minLength: 0)
+
+                Button { showSpotify = true } label: {
+                    Image(systemName: "music.note.house")
+                        .font(.title3)
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.glass)
+            }
+        }
+    }
+
+    /// Floating gear button — deliberately OUTSIDE the transport card since it's
+    /// settings, not playback.
+    private var settingsButton: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.title3)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.glass)
+                .padding(.trailing, 18)
+                .padding(.bottom, 34)
             }
         }
     }
