@@ -65,7 +65,13 @@ public struct WavesUniforms {
 public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
 public struct HypnoState   { public var offset: Float = 0; public var colorShift: Float = 0; public var hue: Float = 0 }
 public struct SpiralState  { public var offset: Float = 0; public var hue: Float = 0 }
-public struct VortexState  { public var tunnelRot: Float = 0 }
+public struct VortexState  {
+    public var tunnelRot: Float = 0
+    public var smoothTwist: Float = 1.8
+    public var smoothScale: Float = 1.0
+    public var smoothTreble: Float = 0
+    public var smoothBass: Float = 0
+}
 public struct WavesState   { public var waveSpin: Float = 0 }
 
 // MARK: - Factory
@@ -214,13 +220,25 @@ public enum VisualizerFactory {
             // Web: tunnelRot += 0.004 + mid * 0.008 per frame at 60fps.
             let normDt = dt * 60.0
             state.tunnelRot += (0.004 + a.mid * 0.008) * normDt
+
+            // Smooth the bass/treble feeds so twist/scale/size don't jitter per-frame.
+            // Single-pole lowpass with dt-aware coefficient.
+            let alphaTwist: Float  = min(1.0, 0.10 * normDt)
+            let alphaScale: Float  = min(1.0, 0.10 * normDt)
+            let alphaTreble: Float = min(1.0, 0.18 * normDt)
+            let alphaBass: Float   = min(1.0, 0.22 * normDt)
+            state.smoothTwist  += (1.8 + a.bass * 1.8 - state.smoothTwist)  * alphaTwist
+            state.smoothScale  += (1.0 + a.bass * 0.06 - state.smoothScale) * alphaScale
+            state.smoothTreble += (a.treble - state.smoothTreble) * alphaTreble
+            state.smoothBass   += (a.bass   - state.smoothBass)   * alphaBass
+
             return VortexUniforms(
                 tunnelRot: state.tunnelRot,
-                bass: a.bass,
-                treble: a.treble,
-                twist: 1.8 + a.bass * 2.0,
-                scale: 1.0 + a.bass * 0.08,
-                rippleAmp: 0.065,
+                bass: state.smoothBass,
+                treble: state.smoothTreble,
+                twist: state.smoothTwist,
+                scale: state.smoothScale,
+                rippleAmp: 0.060,
                 resolution: res,
                 atlasGrid: grid
             )

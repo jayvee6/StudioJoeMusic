@@ -1,13 +1,11 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Uniforms carry state accumulated on the CPU side (rot, hue) so motion is
-// frame-rate-correct and doesn't jitter on beats — matches web's mandalaRot / mandalaHue.
 struct MandalaUniforms {
-    float rot;        // radians, accumulated; base layer rotation
-    float hue;        // 0..1, accumulated; base hue
-    float bass;       // 0..1, current frame
-    float treble;     // 0..1, current frame
+    float rot;        // radians, CPU-accumulated
+    float hue;        // 0..1, CPU-accumulated
+    float bass;
+    float treble;
     float2 resolution;
 };
 
@@ -24,17 +22,15 @@ vertex MVSOut mandala_vs(uint vid [[vertex_id]]) {
     return o;
 }
 
-// HSL → RGB (CSS semantics). h in [0..1], s in [0..1], l in [0..1].
 static float3 hsl2rgb(float h, float s, float l) {
     float3 rgb = clamp(
         abs(fmod(h * 6.0 + float3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0,
-        0.0, 1.0
-    );
+        0.0, 1.0);
     float c = (1.0 - abs(2.0 * l - 1.0)) * s;
     return l + c * (rgb - 0.5);
 }
 
-// Regular-polygon SDF. p is a point in world units, n = #sides, r = inscribed radius.
+// Regular-polygon SDF.
 static float sdPolygon(float2 p, int n, float r) {
     float angle = atan2(p.y, p.x);
     float dist = length(p);
@@ -49,67 +45,72 @@ static float2 rot2(float2 p, float a) {
     return float2(p.x * c - p.y * s, p.x * s + p.y * c);
 }
 
-// Canvas-2D-like stroke: thin core of width `w`, plus exponential glow halo whose
-// falloff is widened by `glowAmount` (matches web's shadowBlur: 8 + bass*24 px).
-static float strokeWithGlow(float d, float w, float glowAmount) {
+// Crisp stroke + narrow tinted halo. `w` is the full half-width of the sharp line;
+// `glowWidth` controls only the exponential halo so overlapping polygons don't wash
+// into a diffuse field.
+static float strokeContribution(float d, float w, float glowWidth) {
     float absD = abs(d);
-    float core = smoothstep(w, w * 0.35, absD);
-    float glowWidth = 0.008 + glowAmount * 0.022;
-    float halo = exp(-absD / glowWidth);
-    return core + halo * glowAmount * 0.45;
+    // Sharp core — fully opaque at absD = 0, falls to 0 at absD = w.
+    float core = smoothstep(w, w * 0.15, absD);
+    // Narrow exponential halo that decays quickly, stays near the line.
+    float halo = exp(-absD / max(glowWidth, 0.00001)) * 0.35;
+    return core + halo;
 }
 
 fragment float4 mandala_fs(MVSOut in [[stage_in]],
                            constant MandalaUniforms& u [[buffer(0)]]) {
-    // Square the viewport on the short side so the mandala scale matches min(W,H).
+    // Short-side square projection so sizes match min(W,H).
     float aspect = u.resolution.x / u.resolution.y;
     float2 uv = in.uv - 0.5;
     if (aspect > 1.0) uv.x *= aspect; else uv.y /= aspect;
 
     float3 color = float3(0.0);
 
-    // Web: 6 layers, maxR = shortSide * 0.38 in px; in our [-0.5, 0.5] unit space that's 0.38.
-    // Per layer: r = maxR * (i+1)/6 * (0.4 + bass*0.9).
+    // Web: 6 layers, maxR = shortSide * 0.38.
     const float maxR = 0.38;
     const int ringCount = 6;
     float radiusScale = 0.40 + u.bass * 0.90;
 
-    // Stroke width (web: 1.5 + bass*4 px, ~1.5/shortSide ≈ 0.002 baseline).
-    float lineW = 0.0025 + u.bass * 0.006;
-    float glowAmount = 0.35 + u.bass * 0.95;
+    // Sharp line width (1.5 + bass*4 px ≈ 0.0025 + bass*0.006 baseline).
+    float lineW = 0.0028 + u.bass * 0.0055;
+    // Glow halo width — narrow so polygons stay crisp.
+    float glowWidth = 0.0035 + u.bass * 0.010;
 
+    // Use max() blending instead of additive sum so overlapping layers don't clip to white.
     for (int i = 0; i < ringCount; i++) {
         int sides = (i % 2 == 0) ? 6 : 3;
 
-        // Layer rotation — even indices +rot, odd -rot (web parity flip).
         float dir = (i % 2 == 0) ? 1.0 : -1.0;
-        float layerRot = u.rot * dir;
-        float2 p = rot2(uv, layerRot);
+        float2 p = rot2(uv, u.rot * dir);
 
-        // Layer radius
         float r = maxR * (float(i) + 1.0) / float(ringCount) * radiusScale;
 
-        // Layer hue: web uses `(hue + i*42) % 360`.
+        // Web layer hue: (hue + i*42°) wrapped.
         float layerHue = fmod(u.hue + float(i) * (42.0 / 360.0), 1.0);
-        // Main stroke: HSL(hue, 100%, 65%) at alpha-like intensity 0.35 + bass*0.65.
-        float3 base = hsl2rgb(layerHue, 1.0, 0.65);
-        float intensity = 0.35 + u.bass * 0.65;
+        // HSL(hue, 100%, 65%) — bright saturated polygon stroke.
+        float3 base = hsl2rgb(layerHue, 1.0, 0.62);
+        float intensity = 0.40 + u.bass * 0.55;
 
-        // Primary polygon
+        // Primary polygon stroke.
         float d1 = sdPolygon(p, sides, r);
-        float s1 = strokeWithGlow(d1, lineW, glowAmount);
+        float s1 = strokeContribution(d1, lineW, glowWidth);
+        float3 c1 = base * s1 * intensity;
 
-        // Secondary polygon, web's overlapping double: offset by half sector, r * 0.72.
+        // Secondary polygon: offset by half sector, scaled to 0.72×.
         float halfSector = M_PI_F / float(sides);
         float2 p2 = rot2(p, halfSector);
         float d2 = sdPolygon(p2, sides, r * 0.72);
-        float s2 = strokeWithGlow(d2, lineW, glowAmount);
+        float s2 = strokeContribution(d2, lineW, glowWidth);
+        float3 c2 = base * s2 * intensity * 0.90;
 
-        color += base * (s1 + s2 * 0.9) * intensity;
+        // Max-blend against the accumulator per-channel so bright polygons dominate
+        // without washing overlaps into white.
+        color = max(color, c1);
+        color = max(color, c2);
     }
 
-    // Center haze — keeps the cumulative bloom from looking flat on heavy bass.
-    float centerHaze = smoothstep(0.45, 0.0, length(uv)) * 0.06 * (0.5 + u.bass);
+    // Subtle center haze so full-bass frames don't feel empty at the core.
+    float centerHaze = smoothstep(0.45, 0.0, length(uv)) * 0.05 * (0.4 + u.bass);
     color += float3(0.22, 0.24, 0.38) * centerHaze;
 
     return float4(max(color, float3(0.0)), 1.0);

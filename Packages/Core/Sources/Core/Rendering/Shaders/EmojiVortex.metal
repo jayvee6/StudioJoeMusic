@@ -51,8 +51,9 @@ vertex VVSOut vortex_vs(uint vid [[vertex_id]],
     float2 center_clip = float2(center_world.x / aspect, center_world.y);
 
     // Web: emoji size = shortSide * (0.03 + t * 0.11) * (1 + treble * 1.2).
-    float size_world = 0.030 + t * 0.11;
-    size_world *= (1.0 + u.treble * 1.2);
+    // `treble` is CPU-smoothed upstream so the flash is punchy but not strobing per frame.
+    float size_world = 0.030 + t * 0.10;
+    size_world *= (1.0 + u.treble * 0.9);
     float size_x = size_world / aspect;
     float size_y = size_world;
 

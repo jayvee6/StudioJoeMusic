@@ -5,6 +5,7 @@ public struct VisualizerUI: View {
     @State private var showPicker = false
     @State private var showSpotify = false
     @State private var currentMode: VisualizerMode = .bars
+    @State private var swipeOffset: CGFloat = 0
 
     public init(viewModel: VisualizerViewModel) {
         self.viewModel = viewModel
@@ -14,10 +15,35 @@ public struct VisualizerUI: View {
         ZStack {
             BlueHourBackground()
             renderer
+                .offset(x: swipeOffset)
             pulsingCircleCanvas
+                .allowsHitTesting(false)
             hudGlass
+                .allowsHitTesting(false)
             transportGlass
         }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onChanged { value in
+                    // Follow the finger a bit for tactile feedback (rubber-band).
+                    let damped = value.translation.width * 0.35
+                    swipeOffset = max(-120, min(120, damped))
+                }
+                .onEnded { value in
+                    let dx = value.translation.width
+                    let vx = value.predictedEndTranslation.width
+                    let threshold: CGFloat = 60
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        if dx < -threshold || vx < -threshold * 2 {
+                            advanceMode(by: 1)
+                        } else if dx > threshold || vx > threshold * 2 {
+                            advanceMode(by: -1)
+                        }
+                        swipeOffset = 0
+                    }
+                }
+        )
         .tint(StudioJoeColors.accent)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showPicker) {
@@ -84,7 +110,6 @@ public struct VisualizerUI: View {
             )
             ctx.fill(Circle().path(in: coreRect), with: .color(core.opacity(0.92)))
         }
-        .allowsHitTesting(false)
     }
 
     private var spectrumCanvas: some View {
@@ -116,7 +141,6 @@ public struct VisualizerUI: View {
                 )
             }
         }
-        .allowsHitTesting(false)
     }
 
     private var hudGlass: some View {
@@ -145,27 +169,55 @@ public struct VisualizerUI: View {
                             .foregroundStyle(StudioJoeColors.label2)
                             .lineLimit(1)
                     }
+                    Text(currentMode.title)
+                        .font(.system(.caption2, design: .rounded, weight: .semibold))
+                        .foregroundStyle(StudioJoeColors.label3)
+                        .textCase(.uppercase)
+                        .padding(.top, 2)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .glassEffect(.regular, in: .rect(cornerRadius: 18))
-                Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 if viewModel.mode == .system {
                     micBadge
                 }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
+
             Spacer()
+
+            modeIndicator
+                .padding(.bottom, 100)
         }
+    }
+
+    private var modeIndicator: some View {
+        HStack(spacing: 6) {
+            ForEach(VisualizerMode.allCases) { mode in
+                Capsule()
+                    .fill(mode == currentMode
+                          ? StudioJoeColors.accent
+                          : StudioJoeColors.label3)
+                    .frame(width: mode == currentMode ? 20 : 6, height: 5)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.85),
+                               value: currentMode)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
     }
 
     private var micBadge: some View {
         Label("Live mic", systemImage: "mic.fill")
             .font(.system(.caption, design: .rounded, weight: .semibold))
             .foregroundStyle(StudioJoeColors.label1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .glassEffect(.regular.tint(StudioJoeColors.accent.opacity(0.35)),
                          in: .capsule)
     }
@@ -173,8 +225,6 @@ public struct VisualizerUI: View {
     private var transportGlass: some View {
         VStack {
             Spacer()
-            modeSwitcher
-                .padding(.bottom, 14)
             GlassEffectContainer(spacing: 12) {
                 HStack(spacing: 12) {
                     Button {
@@ -206,39 +256,17 @@ public struct VisualizerUI: View {
                     .disabled(viewModel.mode == .idle)
                 }
             }
+            .padding(.horizontal, 12)
             .padding(.bottom, 28)
         }
     }
 
-    private var modeSwitcher: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(VisualizerMode.allCases) { mode in
-                    modePill(for: mode)
-                }
-            }
-        }
-    }
+    // MARK: - Mode navigation
 
-    @ViewBuilder
-    private func modePill(for mode: VisualizerMode) -> some View {
-        let selected = (currentMode == mode)
-        let label = Label(mode.title, systemImage: mode.symbol)
-            .labelStyle(.titleAndIcon)
-            .font(.system(.footnote, weight: .semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-
-        if selected {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { currentMode = mode }
-            } label: { label }
-            .buttonStyle(.glassProminent)
-        } else {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { currentMode = mode }
-            } label: { label }
-            .buttonStyle(.glass)
-        }
+    private func advanceMode(by delta: Int) {
+        let all = VisualizerMode.allCases
+        guard let current = all.firstIndex(of: currentMode) else { return }
+        let next = (current + delta + all.count) % all.count
+        currentMode = all[next]
     }
 }
