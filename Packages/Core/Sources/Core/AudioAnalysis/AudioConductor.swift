@@ -248,11 +248,34 @@ public final class AudioConductor: @unchecked Sendable {
         systemPlayer.stop()
 
         let localURL = try await ensureLocalFile(url: url)
-        let file = try AVAudioFile(forReading: localURL)
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: localURL)
+        } catch {
+            // Most commonly: FairPlay-wrapped Apple Music download. assetURL is
+            // non-nil but AVAudioFile can't decode it. Surface a more useful
+            // error than the bare OSStatus so the fallback path is obvious.
+            let ns = error as NSError
+            throw NSError(domain: "AudioConductor.loadFile", code: ns.code,
+                          userInfo: [
+                            NSLocalizedDescriptionKey: "AVAudioFile couldn't read \(localURL.lastPathComponent)",
+                            NSLocalizedFailureReasonErrorKey: "\(ns.domain)(\(ns.code)): \(ns.localizedDescription)",
+                            NSUnderlyingErrorKey: ns
+                          ])
+        }
         audioFile = file
         let sampleRate = file.processingFormat.sampleRate
         let actualDuration = max(duration, Double(file.length) / sampleRate)
         log.info("Loaded file \(localURL.lastPathComponent, privacy: .public) — \(Int(sampleRate))Hz, \(Int(actualDuration))s")
+
+        // Stop the engine before reconfiguring. `engine.connect(_:to:format:)`
+        // on a RUNNING graph with a different format raises OSStatus -50
+        // (paramErr). Happens when the user plays track A at 44.1kHz, then
+        // track B at 48kHz (or different channel count). Reopen cleanly.
+        if engine.isRunning {
+            engine.stop()
+        }
+        try switchTap(to: .none)   // pre-tap teardown so install matches new format
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback,
@@ -265,11 +288,9 @@ public final class AudioConductor: @unchecked Sendable {
 
         try switchTap(to: .mixer)
 
-        if !engine.isRunning {
-            engine.prepare()
-            try engine.start()
-            log.info("Engine started, output format: \(self.engine.mainMixerNode.outputFormat(forBus: 0))")
-        }
+        engine.prepare()
+        try engine.start()
+        log.info("Engine started, mixer output format: \(self.engine.mainMixerNode.outputFormat(forBus: 0))")
 
         player.stop()
         seekBaseFrames = 0
@@ -291,17 +312,19 @@ public final class AudioConductor: @unchecked Sendable {
         // Stop file playback if any
         player.stop()
 
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback,
-                                mode: .default,
-                                options: [.allowBluetoothA2DP, .allowAirPlay])
-        try session.setActive(true)
-
-        engine.disconnectNodeOutput(player)
-        // No tap — the system player handles audio out directly, and the engine
-        // stays idle for this mode. Spectrum comes from a synthetic analysis
-        // driver if one is connected via setAnalysisSource(.synthetic(...)).
+        // Cede the audio hardware to the system player. AVAudioEngine holding
+        // the route while `MPMusicPlayerController.applicationMusicPlayer`
+        // tries to start DRM playback produces OSStatus -50 (paramErr) when
+        // the session / engine fight over the output.
+        if engine.isRunning {
+            engine.stop()
+        }
         try switchTap(to: .none)
+        engine.disconnectNodeOutput(player)
+
+        // DO NOT manipulate AVAudioSession here. The application music player
+        // manages its own session; calling `setCategory` / `setActive(true)`
+        // mid-queue conflicts and throws -50. Let the system handle it.
 
         systemPlayer.setQueue(with: MPMediaItemCollection(items: [item]))
         bpm.reset()
