@@ -8,14 +8,14 @@ private let log = Logger(subsystem: "dev.studiojoe.Core", category: "AudioConduc
 public enum PlaybackMode: Sendable, Equatable {
     case idle
     case file     // AVAudioPlayerNode → mainMixerNode tap (owned tracks)
-    case system   // MPMusicPlayerController + inputNode (mic) tap (DRM tracks)
+    case system   // MPMusicPlayerController, no tap (DRM tracks — spectrum via synthetic analysis if connected)
 }
 
 /// Selects which signal drives the `spectrum` stream. Playback mode
 /// (.file / .system) is chosen by the source of the audio itself — it is
-/// independent of this choice. For DRM tracks we can prefer synthetic over
-/// the mic; for owned file playback we can still flip to synthetic to match
-/// the Spotify-anchored visuals.
+/// independent of this choice. For DRM tracks there is no live tap, so
+/// synthetic is the only reactive source; for owned file playback we can
+/// still flip to synthetic to match the Spotify-anchored visuals.
 public enum AnalysisSource {
     case tap                            // FFT from active AVAudioEngine tap
     case synthetic(SyntheticAnalysisDriver)
@@ -53,7 +53,7 @@ public final class AudioConductor: @unchecked Sendable {
     // player node's local sampleTime back to absolute playback position.
     private var seekBaseFrames: AVAudioFramePosition = 0
 
-    private enum TapKind { case none, mixer, mic }
+    private enum TapKind { case none, mixer }
 
     public init() {
         engine.attach(player)
@@ -124,7 +124,8 @@ public final class AudioConductor: @unchecked Sendable {
             } catch {
                 // Some library assets (DRM-wrapped Apple Music downloads, protected iTunes
                 // purchases, etc.) return a non-nil assetURL but refuse to export / be
-                // read by AVAudioFile. Fall back to the system player + mic-tap path.
+                // read by AVAudioFile. Fall back to the system player path (spectrum via
+                // synthetic analysis if connected).
                 let ns = error as NSError
                 log.warning("loadFile failed (\(ns.domain)\(ns.code) — \(ns.localizedDescription, privacy: .public)); falling back to system player")
             }
@@ -284,40 +285,23 @@ public final class AudioConductor: @unchecked Sendable {
         }
     }
 
-    // MARK: - System mode (DRM tracks: MPMusicPlayerController + mic)
+    // MARK: - System mode (DRM tracks: MPMusicPlayerController, no tap)
 
     private func loadSystemPlayer(item: MPMediaItem) async throws {
         // Stop file playback if any
         player.stop()
 
-        let granted = await requestMicAccess()
-        guard granted else {
-            throw NSError(
-                domain: "AudioConductor", code: -20,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Microphone access denied",
-                    NSLocalizedFailureReasonErrorKey:
-                        "DRM-protected tracks (Apple Music subscription downloads) need the microphone to react to what's playing on the speaker. Grant mic access in Settings → StudioJoe Music and try again."
-                ]
-            )
-        }
-
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord,
+        try session.setCategory(.playback,
                                 mode: .default,
-                                options: [.defaultToSpeaker,
-                                          .allowBluetoothA2DP,
-                                          .mixWithOthers])
+                                options: [.allowBluetoothA2DP, .allowAirPlay])
         try session.setActive(true)
 
         engine.disconnectNodeOutput(player)
-        try switchTap(to: .mic)
-
-        if !engine.isRunning {
-            engine.prepare()
-            try engine.start()
-            log.info("Engine started for mic tap, format: \(self.engine.inputNode.outputFormat(forBus: 0))")
-        }
+        // No tap — the system player handles audio out directly, and the engine
+        // stays idle for this mode. Spectrum comes from a synthetic analysis
+        // driver if one is connected via setAnalysisSource(.synthetic(...)).
+        try switchTap(to: .none)
 
         systemPlayer.setQueue(with: MPMediaItemCollection(items: [item]))
         bpm.reset()
@@ -327,18 +311,7 @@ public final class AudioConductor: @unchecked Sendable {
             self.durationSec = item.playbackDuration
             self.positionSec = 0
         }
-        log.info("System queue set, mic tap active — play speakers to drive visualization")
-    }
-
-    private func requestMicAccess() async -> Bool {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-        switch status {
-        case .authorized: return true
-        case .notDetermined:
-            return await AVCaptureDevice.requestAccess(for: .audio)
-        case .denied, .restricted: return false
-        @unknown default: return false
-        }
+        log.info("System player queued — spectrum via synthetic analysis if available")
     }
 
     @objc private func systemPlaybackStateChanged() {
@@ -388,7 +361,6 @@ public final class AudioConductor: @unchecked Sendable {
         if activeTap == kind { return }
         switch activeTap {
         case .mixer: engine.mainMixerNode.removeTap(onBus: 0)
-        case .mic:   engine.inputNode.removeTap(onBus: 0)
         case .none:  break
         }
         switch kind {
@@ -396,12 +368,6 @@ public final class AudioConductor: @unchecked Sendable {
             let mixer = engine.mainMixerNode
             mixer.installTap(onBus: 0, bufferSize: 1024,
                              format: mixer.outputFormat(forBus: 0)) { [weak self] buf, time in
-                self?.handle(buffer: buf, time: time)
-            }
-        case .mic:
-            let input = engine.inputNode
-            let format = input.outputFormat(forBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buf, time in
                 self?.handle(buffer: buf, time: time)
             }
         case .none: break
