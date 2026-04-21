@@ -4,6 +4,7 @@ public struct VisualizerUI: View {
     @ObservedObject public var viewModel: VisualizerViewModel
     @State private var showPicker = false
     @State private var showSpotify = false
+    @State private var showSettings = false
     @State private var currentMode: VisualizerMode = .bars
     @State private var swipeOffset: CGFloat = 0
 
@@ -21,6 +22,7 @@ public struct VisualizerUI: View {
             hudGlass
                 .allowsHitTesting(false)
             transportGlass
+            settingsButton   // floats bottom-right, above everything
         }
         .contentShape(Rectangle())
         .gesture(
@@ -59,6 +61,9 @@ public struct VisualizerUI: View {
             SpotifyLibraryView(viewModel: viewModel) {
                 showSpotify = false
             }
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView { showSettings = false }
         }
         .alert("Playback error",
                isPresented: Binding(
@@ -230,6 +235,23 @@ public struct VisualizerUI: View {
             sourceRow
             playbackRow
                 .padding(.bottom, 28)
+        }
+    }
+
+    private var settingsButton: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.title2)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.glass)
+                .padding(.trailing, 18)
+                .padding(.bottom, 34)
+            }
         }
     }
 
