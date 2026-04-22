@@ -2,6 +2,9 @@ import SwiftUI
 import Combine
 import MediaPlayer
 import QuartzCore
+import os
+
+private let log = Logger(subsystem: "dev.studiojoe.Core", category: "VisualizerViewModel")
 
 @MainActor
 public final class VisualizerViewModel: NSObject, ObservableObject {
@@ -48,41 +51,49 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
 
     private let conductor: AudioConductor
     private var displayLink: CADisplayLink?
-    private var metadataService: TrackMetadataService?
-    private var analysisClient: SpotifyAnalysisClient?
-    private var appleMusicKit: AppleMusicKitClient?
-    private var previewAnalysisService: PreviewAnalysisService?
-    /// Spotify iOS SDK playback wrapper. Stored so a future integration step
-    /// can route full-track playback through SPTAppRemote; currently unused at
-    /// call sites — the VM owns the reference, the Settings UI drives it
-    /// directly via a separate @ObservedObject handoff.
-    private var spotifyPlayback: SpotifyPlaybackSource?
+    private let deps: Dependencies
     private var metadataTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
-    /// Remembered source of the most recent track, so the Settings toggle can
-    /// re-kick synthetic analysis mid-track without requiring a reload.
-    private var lastTrackSource: TrackSource = .unknown
-    /// Captured at track-load time so the preview fallback path has everything
-    /// it needs without a second MPMediaItem round-trip.
-    private var lastPersistentID: UInt64?
-    private var lastTrackDuration: Double = 0
-    private var lastBPMHint: Double?
+
+    /// Everything we remember about the most recently-loaded track so the
+    /// Settings toggle can re-kick analysis mid-track, and the preview-FFT
+    /// fallback has the metadata it needs without a second MPMediaItem
+    /// round-trip. One assignment per track load means no risk of a partial
+    /// update where e.g. the source moves forward but the duration lags.
+    private struct LastTrackContext {
+        let source: TrackSource
+        let persistentID: UInt64?
+        let duration: Double
+        let bpmHint: Double?
+        static let empty = LastTrackContext(source: .unknown,
+                                            persistentID: nil,
+                                            duration: 0,
+                                            bpmHint: nil)
+    }
+    private var lastTrack: LastTrackContext = .empty
+
+    /// Optional collaborators bundled into a struct so the init stays tight
+    /// (one required param + Dependencies + binCount) and call sites can use
+    /// a struct literal rather than threading 5+ args.
+    public struct Dependencies: Sendable {
+        public var metadataService: TrackMetadataService? = nil
+        public var analysisClient: SpotifyAnalysisClient? = nil
+        public var appleMusicKit: AppleMusicKitClient? = nil
+        public var previewAnalysisService: PreviewAnalysisService? = nil
+        /// Spotify iOS SDK playback wrapper. The Settings UI holds the same
+        /// reference for the Connect/Disconnect controls; the VM uses it to
+        /// route full-track playback through SPTAppRemote when connected.
+        public var spotifyPlayback: SpotifyPlaybackSource? = nil
+        public init() {}
+    }
 
     public init(conductor: AudioConductor,
                 binCount: Int = 32,
-                metadataService: TrackMetadataService? = nil,
-                analysisClient: SpotifyAnalysisClient? = nil,
-                appleMusicKit: AppleMusicKitClient? = nil,
-                previewAnalysisService: PreviewAnalysisService? = nil,
-                spotifyPlayback: SpotifyPlaybackSource? = nil) {
+                deps: Dependencies = .init()) {
         self.conductor = conductor
         self.binCount = binCount
         self.magnitudes = Array(repeating: 0, count: binCount)
-        self.metadataService = metadataService
-        self.analysisClient = analysisClient
-        self.appleMusicKit = appleMusicKit
-        self.previewAnalysisService = previewAnalysisService
-        self.spotifyPlayback = spotifyPlayback
+        self.deps = deps
         super.init()
         startDisplayLoop()
     }
@@ -109,7 +120,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         let bpm: Double? = item.beatsPerMinute > 0 ? Double(item.beatsPerMinute) : nil
         // Try to enrich with ISRC via MusicKit so synthetic analysis can kick in
         // for DRM Apple Music tracks. If unavailable, fall back to BPM-only source.
-        let isrc: String? = await appleMusicKit?.isrc(for: item.persistentID)
+        let isrc: String? = await deps.appleMusicKit?.isrc(for: item.persistentID)
         let source: TrackSource
         if let isrc {
             source = .appleWithISRC(isrc: isrc, bpm: bpm)
@@ -118,11 +129,13 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         } else {
             source = .appleUnknown
         }
-        // Capture the context the preview fallback needs, before resetMetadata()
-        // clears analysis state.
-        lastPersistentID = item.persistentID
-        lastTrackDuration = item.playbackDuration
-        lastBPMHint = bpm
+        // Single assignment — no chance of a partial update.
+        lastTrack = LastTrackContext(
+            source: source,
+            persistentID: item.persistentID,
+            duration: item.playbackDuration,
+            bpmHint: bpm
+        )
 
         resetMetadata()
         do {
@@ -131,11 +144,10 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
             playbackBackend = .conductor
             errorMessage = nil
             fetchMetadata(for: source)
-            activateAnalysisIfAvailable(source: source)
+            activateAnalysisIfAvailable()
         } catch {
             errorMessage = Self.verboseMessage(for: error)
-            print("[VisualizerViewModel] load error: \(error as NSError)\n"
-                  + "userInfo: \((error as NSError).userInfo)")
+            log.error("load error: \((error as NSError).domain, privacy: .public)(\((error as NSError).code, privacy: .public)) \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -146,9 +158,12 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                      source: TrackSource = .unknown) async {
         // Remote URLs (Spotify previews, downloaded mp3s) run through the
         // file-mixer tap; the preview-clip fallback is Apple-Music-specific.
-        lastPersistentID = nil
-        lastTrackDuration = durationSec
-        lastBPMHint = nil
+        lastTrack = LastTrackContext(
+            source: source,
+            persistentID: nil,
+            duration: durationSec,
+            bpmHint: nil
+        )
 
         resetMetadata()
         do {
@@ -160,10 +175,10 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
             playbackBackend = .conductor
             errorMessage = nil
             fetchMetadata(for: source)
-            activateAnalysisIfAvailable(source: source)
+            activateAnalysisIfAvailable()
         } catch {
             errorMessage = Self.verboseMessage(for: error)
-            print("[VisualizerViewModel] remote load error: \(error as NSError)")
+            log.error("remote load error: \((error as NSError).domain, privacy: .public)(\((error as NSError).code, privacy: .public)) \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -183,12 +198,15 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         let source = TrackSource.spotify(id: trackID)
 
         // SDK path: full-track via SPTAppRemote.
-        if let sdk = spotifyPlayback, sdk.isConnected {
+        if let sdk = deps.spotifyPlayback, sdk.isConnected {
             // Stop any local playback so the conductor isn't holding the route.
             conductor.stop()
-            lastPersistentID = nil
-            lastTrackDuration = durationSec
-            lastBPMHint = nil
+            lastTrack = LastTrackContext(
+                source: source,
+                persistentID: nil,
+                duration: durationSec,
+                bpmHint: nil
+            )
 
             resetMetadata()
             do {
@@ -196,13 +214,13 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                 playbackBackend = .spotifyApp
                 errorMessage = nil
                 fetchMetadata(for: source)
-                activateAnalysisIfAvailable(source: source)
+                activateAnalysisIfAvailable()
                 return
             } catch {
                 // SDK play failed (Spotify app closed, not Premium, etc.).
                 // Fall back to preview if one is available; otherwise surface.
                 let ns = error as NSError
-                print("[VisualizerViewModel] SDK play failed: \(ns.domain)(\(ns.code)) — \(ns.localizedDescription)")
+                log.warning("SDK play failed: \(ns.domain, privacy: .public)(\(ns.code, privacy: .public)) — \(ns.localizedDescription, privacy: .public)")
                 if previewURL == nil {
                     errorMessage = Self.verboseMessage(for: error)
                     return
@@ -235,13 +253,30 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     }
 
     private func fetchMetadata(for source: TrackSource) {
-        guard let service = metadataService, source != .unknown else { return }
+        guard let service = deps.metadataService, source != .unknown else { return }
         metadataTask = Task { [weak self] in
             guard let self else { return }
             let features = await service.features(for: source)
             if Task.isCancelled { return }
             await MainActor.run {
                 self.metadataFeatures = features
+            }
+        }
+    }
+
+    /// Installs a synthetic driver on the conductor from a resolved analysis
+    /// blob, and updates the source indicator on the MainActor. Extracted so
+    /// the Tier-1 and Tier-2 success paths don't drift.
+    private func installSynthetic(_ analysis: SpotifyAudioAnalysis,
+                                  as label: ActiveAnalysisSource) async {
+        await MainActor.run {
+            let driver = SyntheticAnalysisDriver(analysis: analysis, binCount: self.binCount)
+            self.conductor.setAnalysisSource(.synthetic(driver))
+            self.activeAnalysisSource = label
+            if label == .syntheticFromPreview {
+                log.info("Analysis source → synthetic (preview tier)")
+            } else {
+                log.info("Analysis source → synthetic")
             }
         }
     }
@@ -255,31 +290,49 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     /// Silently no-ops on total failure — the tap path remains active as the
     /// floor fallback (or stays silent for DRM Apple Music tracks with no
     /// tappable audio route).
-    private func activateAnalysisIfAvailable(source: TrackSource) {
+    ///
+    /// Reads all state from `lastTrack`; call sites update that struct before
+    /// invoking this.
+    private func activateAnalysisIfAvailable() {
         guard preferSyntheticAnalysis else { return }
-        lastTrackSource = source
 
         // Capture @MainActor-isolated state up front so the Task body uses
         // plain values and only needs cross-actor hops for explicit awaits.
-        let client = analysisClient
-        let previewService = previewAnalysisService
-        let meta = metadataService
-        let pid = lastPersistentID
-        let duration = lastTrackDuration
-        let bpmHint = lastBPMHint
-        let bins = binCount
+        let source = lastTrack.source
+        let pid = lastTrack.persistentID
+        let duration = lastTrack.duration
+        let bpmHint = lastTrack.bpmHint
+        let client = deps.analysisClient
+        let previewService = deps.previewAnalysisService
+        let meta = deps.metadataService
+        let appleMusicKit = deps.appleMusicKit
 
         analysisTask = Task { [weak self] in
             guard let self else { return }
 
             // Tier 1: Spotify analysis by track ID (direct or resolved from ISRC).
+            // For .appleWithISRC, speculatively warm the AppleMusicKit SongInfo
+            // cache in parallel — if Tier-1 wins, the extra fetch is free
+            // (cached for next track); if Tier-1 misses, Tier-2's
+            // previewURL(for:) call below hits a warm cache.
             if let client {
                 let trackID: String?
                 switch source {
                 case .spotify(let id):
                     trackID = id
                 case .appleWithISRC:
-                    trackID = await meta?.resolveSpotifyTrackID(for: source)
+                    async let resolved = meta?.resolveSpotifyTrackID(for: source)
+                    // Fire-and-forget preview-URL warming via an inherited
+                    // child `Task` so it runs TRULY in parallel with the
+                    // ISRC resolution above. (An `async let _` inside a
+                    // block would be implicitly awaited at scope exit,
+                    // serializing it — defeats the parallelism goal.) The
+                    // outer Task's cancellation propagates down to this
+                    // child, so we don't leak past the analysis lifetime.
+                    if let pid, let akit = appleMusicKit {
+                        Task { _ = await akit.previewURL(for: pid) }
+                    }
+                    trackID = await resolved
                 case .appleWithBPM, .appleUnknown, .unknown:
                     trackID = nil
                 }
@@ -288,16 +341,12 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                     do {
                         let analysis = try await client.analysis(for: id)
                         if Task.isCancelled { return }
-                        await MainActor.run {
-                            let driver = SyntheticAnalysisDriver(analysis: analysis, binCount: bins)
-                            self.conductor.setAnalysisSource(.synthetic(driver))
-                            self.activeAnalysisSource = .synthetic
-                        }
+                        await self.installSynthetic(analysis, as: .synthetic)
                         return
                     } catch {
                         // Analysis 404s on ~15% of tracks. Don't stop here —
                         // fall through to the preview-clip tier.
-                        print("[VisualizerViewModel] synthetic analysis unavailable for \(id): \(error.localizedDescription)")
+                        log.warning("Tier-1 analysis unavailable for \(id, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     }
                 }
             }
@@ -312,13 +361,9 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                         bpmHint: bpmHint
                     )
                     if Task.isCancelled { return }
-                    await MainActor.run {
-                        let driver = SyntheticAnalysisDriver(analysis: analysis, binCount: bins)
-                        self.conductor.setAnalysisSource(.synthetic(driver))
-                        self.activeAnalysisSource = .syntheticFromPreview
-                    }
+                    await self.installSynthetic(analysis, as: .syntheticFromPreview)
                 } catch {
-                    print("[VisualizerViewModel] preview fallback unavailable for pid=\(pid): \(error.localizedDescription)")
+                    log.warning("Tier-2 preview fallback unavailable for pid=\(pid, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
@@ -329,9 +374,9 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         preferSyntheticAnalysis = on
         if on {
             // Attempt to activate for whatever track is currently loaded. If
-            // lastTrackSource is .unknown (nothing loaded) or it doesn't resolve
-            // to a Spotify ID, this is a no-op and we stay on tap.
-            activateAnalysisIfAvailable(source: lastTrackSource)
+            // nothing is loaded, or the source doesn't resolve to a Spotify
+            // ID, this is a no-op and we stay on tap.
+            activateAnalysisIfAvailable()
         } else {
             conductor.setAnalysisSource(.tap)
             activeAnalysisSource = .tap
@@ -357,7 +402,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         case .conductor:
             conductor.isPlaying ? conductor.pause() : conductor.play()
         case .spotifyApp:
-            guard let sdk = spotifyPlayback else { return }
+            guard let sdk = deps.spotifyPlayback else { return }
             let playing = sdk.isPlaying
             Task {
                 do {
@@ -375,7 +420,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         switch playbackBackend {
         case .conductor: conductor.stop()
         case .spotifyApp:
-            if let sdk = spotifyPlayback {
+            if let sdk = deps.spotifyPlayback {
                 Task { try? await sdk.pause() }
             }
         case .idle: break
@@ -387,7 +432,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         switch playbackBackend {
         case .conductor: conductor.seek(to: seconds)
         case .spotifyApp:
-            guard let sdk = spotifyPlayback else { return }
+            guard let sdk = deps.spotifyPlayback else { return }
             Task { try? await sdk.seek(to: seconds) }
         case .idle: break
         }
@@ -404,7 +449,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     public var isPlaying: Bool {
         switch playbackBackend {
         case .conductor:  return conductor.isPlaying
-        case .spotifyApp: return spotifyPlayback?.isPlaying ?? false
+        case .spotifyApp: return deps.spotifyPlayback?.isPlaying ?? false
         case .idle:       return false
         }
     }
@@ -412,7 +457,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     public var positionSec: Double {
         switch playbackBackend {
         case .conductor:  return conductor.positionSec
-        case .spotifyApp: return spotifyPlayback?.positionSec ?? 0
+        case .spotifyApp: return deps.spotifyPlayback?.positionSec ?? 0
         case .idle:       return 0
         }
     }
@@ -420,7 +465,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     public var durationSec: Double {
         switch playbackBackend {
         case .conductor:  return conductor.durationSec
-        case .spotifyApp: return spotifyPlayback?.currentTrack?.durationSec ?? 0
+        case .spotifyApp: return deps.spotifyPlayback?.currentTrack?.durationSec ?? 0
         case .idle:       return 0
         }
     }
@@ -430,7 +475,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     public var currentTitle: String? {
         switch playbackBackend {
         case .conductor:  return conductor.currentTitle
-        case .spotifyApp: return spotifyPlayback?.currentTrack?.name
+        case .spotifyApp: return deps.spotifyPlayback?.currentTrack?.name
         case .idle:       return nil
         }
     }
@@ -438,7 +483,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     public var currentArtist: String? {
         switch playbackBackend {
         case .conductor:  return conductor.currentArtist
-        case .spotifyApp: return spotifyPlayback?.currentTrack?.artistName
+        case .spotifyApp: return deps.spotifyPlayback?.currentTrack?.artistName
         case .idle:       return nil
         }
     }
