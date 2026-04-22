@@ -91,17 +91,32 @@ public struct WavesUniforms {
 }
 
 public struct RorschachUniforms {
-    public var time: Float = 0
-    public var bass: Float = 0
-    public var mid: Float = 0
-    public var treble: Float = 0
-    // 4 floats = 16 bytes before resolution — keeps float2 at an 8-byte boundary
-    public var resolution: SIMD2<Float> = .zero
-    public var beatPulse: Float = 0
-    public var valence: Float = 0.5
-    public var energy: Float = 0.5
-    public var danceability: Float = 0.5
-    public var tempoBPM: Float = 120
+    public var time: Float
+    public var bass: Float
+    public var mid: Float
+    public var treble: Float
+    // 4 floats (16 bytes) before resolution — keeps float2 at an 8-byte boundary.
+    public var resolution: SIMD2<Float>
+    public var beatPulse: Float
+    public var valence: Float
+    public var energy: Float
+    public var danceability: Float
+    public var tempoBPM: Float
+    // Metal pads struct size to a multiple of float2's alignment (8), making the
+    // shader struct 48 bytes. This field closes the 4-byte gap so
+    // MemoryLayout<RorschachUniforms>.size == 48, matching the shader exactly.
+    var _metalPad: Float
+
+    public init(time: Float = 0, bass: Float = 0, mid: Float = 0, treble: Float = 0,
+                resolution: SIMD2<Float> = .zero, beatPulse: Float = 0,
+                valence: Float = 0.5, energy: Float = 0.5,
+                danceability: Float = 0.5, tempoBPM: Float = 120) {
+        self.time = time; self.bass = bass; self.mid = mid; self.treble = treble
+        self.resolution = resolution; self.beatPulse = beatPulse
+        self.valence = valence; self.energy = energy
+        self.danceability = danceability; self.tempoBPM = tempoBPM
+        self._metalPad = 0
+    }
 }
 
 public struct LunarUniforms {
