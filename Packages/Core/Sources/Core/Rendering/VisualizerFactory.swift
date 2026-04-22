@@ -104,6 +104,18 @@ public struct RorschachUniforms {
     public var tempoBPM: Float = 120
 }
 
+public struct LunarUniforms {
+    public var time: Float = 0
+    public var rotY: Float = 0          // CPU-accumulated y-axis rotation
+    public var bass: Float = 0
+    public var treble: Float = 0
+    public var resolution: SIMD2<Float> = .zero
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
+}
+
 // MARK: - State structs
 
 public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
@@ -117,6 +129,7 @@ public struct VortexState  {
     public var smoothBass: Float = 0
 }
 public struct WavesState   { public var waveSpin: Float = 0 }
+public struct LunarState   { public var rotY: Float = 0 }
 
 // MARK: - Factory
 
@@ -143,6 +156,8 @@ public enum VisualizerFactory {
             return try FerroRenderer(context: context, pixelFormat: pixelFormat)
         case .rorschach:
             return try makeRorschach(context: context, pixelFormat: pixelFormat)
+        case .lunar:
+            return try makeLunar(context: context, pixelFormat: pixelFormat)
         }
     }
 
@@ -370,6 +385,31 @@ public enum VisualizerFactory {
                 ringScale: 0.13,
                 resolution: res,
                 atlasGrid: grid,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
+            )
+        }
+    }
+
+    private static func makeLunar(context: MetalContext,
+                                  pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+        try FragmentRenderer<LunarUniforms, LunarState>(
+            context: context, pixelFormat: pixelFormat,
+            vertexFunction: "lunar_vs", fragmentFunction: "lunar_fs",
+            label: "Lunar",
+            initialState: LunarState()
+        ) { state, a, dt, res in
+            let normDt = dt * 60.0
+            // Slow y-axis spin; danceability nudges speed slightly
+            state.rotY += (0.003 + a.danceability * 0.002) * normDt
+            return LunarUniforms(
+                time: a.time,
+                rotY: state.rotY,
+                bass: a.bass,
+                treble: a.treble,
+                resolution: res,
                 valence: a.valence,
                 energy: a.energy,
                 danceability: a.danceability,
