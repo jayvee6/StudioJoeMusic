@@ -9,18 +9,19 @@ struct StudioJoeMusicApp: App {
     init() {
         let spotifyAuth = SpotifyAuth()
         let catalog = SpotifyCatalog(auth: spotifyAuth)
-        let metadata = TrackMetadataService(spotifyCatalog: catalog)
-        let analysis = SpotifyAnalysisClient(auth: spotifyAuth)
         let appleMusicKit = AppleMusicKitClient()
-        let previewAnalysis = PreviewAnalysisService(appleMusicKit: appleMusicKit)
         let playback = SpotifyPlaybackSource()
+
+        var deps = VisualizerViewModel.Dependencies()
+        deps.metadataService = TrackMetadataService(spotifyCatalog: catalog)
+        deps.analysisClient = SpotifyAnalysisClient(auth: spotifyAuth)
+        deps.appleMusicKit = appleMusicKit
+        deps.previewAnalysisService = PreviewAnalysisService(appleMusicKit: appleMusicKit)
+        deps.spotifyPlayback = playback
+
         let vm = VisualizerViewModel(
             conductor: AudioConductor(),
-            metadataService: metadata,
-            analysisClient: analysis,
-            appleMusicKit: appleMusicKit,
-            previewAnalysisService: previewAnalysis,
-            spotifyPlayback: playback
+            deps: deps
         )
         _viewModel = StateObject(wrappedValue: vm)
         _spotifyPlayback = StateObject(wrappedValue: playback)
