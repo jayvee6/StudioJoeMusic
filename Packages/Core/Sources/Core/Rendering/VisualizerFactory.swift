@@ -90,6 +90,20 @@ public struct WavesUniforms {
     public var tempoBPM: Float = 120
 }
 
+public struct RorschachUniforms {
+    public var time: Float = 0
+    public var bass: Float = 0
+    public var mid: Float = 0
+    public var treble: Float = 0
+    // 4 floats = 16 bytes before resolution — keeps float2 at an 8-byte boundary
+    public var resolution: SIMD2<Float> = .zero
+    public var beatPulse: Float = 0
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
+}
+
 // MARK: - State structs
 
 public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
@@ -127,6 +141,8 @@ public enum VisualizerFactory {
             return try makeWaves(context: context, pixelFormat: pixelFormat, atlas: atlas)
         case .ferrofluid:
             return try FerroRenderer(context: context, pixelFormat: pixelFormat)
+        case .rorschach:
+            return try makeRorschach(context: context, pixelFormat: pixelFormat)
         }
     }
 
@@ -301,6 +317,29 @@ public enum VisualizerFactory {
                 rippleAmp: 0.060,
                 resolution: res,
                 atlasGrid: grid,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
+            )
+        }
+    }
+
+    private static func makeRorschach(context: MetalContext,
+                                      pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+        try FragmentRenderer<RorschachUniforms, Void>(
+            context: context, pixelFormat: pixelFormat,
+            vertexFunction: "rorschach_vs", fragmentFunction: "rorschach_fs",
+            label: "Rorschach",
+            initialState: ()
+        ) { _, a, _, res in
+            RorschachUniforms(
+                time: a.time,
+                bass: a.bass,
+                mid: a.mid,
+                treble: a.treble,
+                resolution: res,
+                beatPulse: a.beatPulse,
                 valence: a.valence,
                 energy: a.energy,
                 danceability: a.danceability,
