@@ -33,6 +33,10 @@ public final class AudioConductor: @unchecked Sendable {
     public private(set) var currentTitle: String?
     public private(set) var currentArtist: String?
     public private(set) var analysisSource: AnalysisSource = .tap
+    /// Becomes true after `enableMicCapture()` succeeds. When true, the mic
+    /// tap is the default analysis signal; file playback temporarily swaps
+    /// to the mixer tap and swaps back on stop.
+    public private(set) var isMicCaptureEnabled: Bool = false
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -53,7 +57,7 @@ public final class AudioConductor: @unchecked Sendable {
     // player node's local sampleTime back to absolute playback position.
     private var seekBaseFrames: AVAudioFramePosition = 0
 
-    private enum TapKind { case none, mixer }
+    private enum TapKind { case none, mixer, mic }
 
     public init() {
         engine.attach(player)
@@ -105,6 +109,67 @@ public final class AudioConductor: @unchecked Sendable {
             log.info("Analysis source → synthetic")
         } else {
             log.info("Analysis source → tap")
+        }
+    }
+
+    /// Turn on ambient-audio capture via the iPhone's microphone. The mic
+    /// tap becomes the default analysis signal source: visualizers react to
+    /// whatever music is playing nearby (speaker, dock, nearby source).
+    /// File playback temporarily swaps to the mixer tap (clean digital
+    /// signal from the audio file) and swaps back on stop().
+    ///
+    /// Requests mic permission on first call if not yet determined. Silently
+    /// no-ops if denied — visuals stay quiet rather than surfacing an error.
+    /// Idempotent: safe to call multiple times. All audio processing runs
+    /// on-device via vDSP; no buffers are written to disk or transmitted.
+    ///
+    /// Call once at app launch from `@MainActor` context.
+    public func enableMicCapture() async -> Bool {
+        if isMicCaptureEnabled { return true }
+
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        let granted: Bool
+        switch status {
+        case .authorized:    granted = true
+        case .notDetermined: granted = await AVCaptureDevice.requestAccess(for: .audio)
+        case .denied, .restricted: granted = false
+        @unknown default:    granted = false
+        }
+        guard granted else {
+            log.info("Mic permission not granted — visuals stay quiet when audio is external")
+            return false
+        }
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            // .measurement mode disables system audio pre-processing (AGC,
+            // noise suppression) so we capture the rawest signal we can feed
+            // the FFT. .mixWithOthers lets music playing in another app keep
+            // playing. .defaultToSpeaker so ambient listening still works
+            // when no headphones are connected.
+            try session.setCategory(.playAndRecord,
+                                    mode: .measurement,
+                                    options: [.mixWithOthers,
+                                              .allowBluetoothA2DP,
+                                              .allowAirPlay,
+                                              .defaultToSpeaker])
+            try session.setActive(true)
+
+            // If the engine was configured for file playback (player
+            // connected to mixer at a specific format), leave that alone —
+            // the mic tap lives on inputNode and coexists with any other
+            // node graph. Just install the tap and start the engine.
+            try switchTap(to: .mic)
+            if !engine.isRunning {
+                engine.prepare()
+                try engine.start()
+            }
+            DispatchQueue.main.async { self.isMicCaptureEnabled = true }
+            log.info("Mic capture enabled — input format \(self.engine.inputNode.outputFormat(forBus: 0))")
+            return true
+        } catch {
+            log.error("Mic capture setup failed: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
@@ -193,6 +258,16 @@ public final class AudioConductor: @unchecked Sendable {
             self.analysisSource = .tap
         }
 
+        // Return to mic-tap default if mic capture was enabled — when a file
+        // stops, ambient visualization resumes from the microphone.
+        if isMicCaptureEnabled && activeTap != .mic {
+            try? switchTap(to: .mic)
+            if !engine.isRunning {
+                engine.prepare()
+                try? engine.start()
+            }
+        }
+
         DispatchQueue.main.async {
             self.isPlaying = false
             self.positionSec = 0
@@ -278,9 +353,21 @@ public final class AudioConductor: @unchecked Sendable {
         try switchTap(to: .none)   // pre-tap teardown so install matches new format
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback,
-                                mode: .default,
-                                options: [.allowBluetoothA2DP, .allowAirPlay])
+        // If mic capture is enabled, keep .playAndRecord so the mic stream
+        // can resume on stop(). Otherwise .playback is a lighter-weight
+        // category for pure playback.
+        if isMicCaptureEnabled {
+            try session.setCategory(.playAndRecord,
+                                    mode: .measurement,
+                                    options: [.mixWithOthers,
+                                              .allowBluetoothA2DP,
+                                              .allowAirPlay,
+                                              .defaultToSpeaker])
+        } else {
+            try session.setCategory(.playback,
+                                    mode: .default,
+                                    options: [.allowBluetoothA2DP, .allowAirPlay])
+        }
         try session.setActive(true)
 
         engine.disconnectNodeOutput(player)
@@ -312,19 +399,27 @@ public final class AudioConductor: @unchecked Sendable {
         // Stop file playback if any
         player.stop()
 
-        // Cede the audio hardware to the system player. AVAudioEngine holding
-        // the route while `MPMusicPlayerController.applicationMusicPlayer`
-        // tries to start DRM playback produces OSStatus -50 (paramErr) when
-        // the session / engine fight over the output.
+        // Disconnect the AVAudioPlayerNode (we don't play through it for DRM)
+        // and swap the active tap to .mic if capture is enabled — the system
+        // player routes audio through the iOS speaker, the mic picks it up
+        // from the room, the visualizer reacts. If mic capture is disabled,
+        // the engine goes fully idle.
         if engine.isRunning {
             engine.stop()
         }
-        try switchTap(to: .none)
         engine.disconnectNodeOutput(player)
 
-        // DO NOT manipulate AVAudioSession here. The application music player
-        // manages its own session; calling `setCategory` / `setActive(true)`
-        // mid-queue conflicts and throws -50. Let the system handle it.
+        if isMicCaptureEnabled {
+            try switchTap(to: .mic)
+            engine.prepare()
+            try engine.start()
+        } else {
+            try switchTap(to: .none)
+        }
+
+        // DO NOT set `.playback` category here — that would kill the mic
+        // input stream. `.playAndRecord` (set by enableMicCapture) coexists
+        // with applicationMusicPlayer's output routing.
 
         systemPlayer.setQueue(with: MPMediaItemCollection(items: [item]))
         bpm.reset()
@@ -334,7 +429,7 @@ public final class AudioConductor: @unchecked Sendable {
             self.durationSec = item.playbackDuration
             self.positionSec = 0
         }
-        log.info("System player queued — spectrum via synthetic analysis if available")
+        log.info("System player queued — spectrum via mic tap=\(self.isMicCaptureEnabled, privacy: .public)")
     }
 
     @objc private func systemPlaybackStateChanged() {
@@ -384,6 +479,7 @@ public final class AudioConductor: @unchecked Sendable {
         if activeTap == kind { return }
         switch activeTap {
         case .mixer: engine.mainMixerNode.removeTap(onBus: 0)
+        case .mic:   engine.inputNode.removeTap(onBus: 0)
         case .none:  break
         }
         switch kind {
@@ -391,6 +487,16 @@ public final class AudioConductor: @unchecked Sendable {
             let mixer = engine.mainMixerNode
             mixer.installTap(onBus: 0, bufferSize: 1024,
                              format: mixer.outputFormat(forBus: 0)) { [weak self] buf, time in
+                self?.handle(buffer: buf, time: time)
+            }
+        case .mic:
+            // Disable voice-call-style processing — it's tuned to SUPPRESS
+            // music as "background noise", which is the opposite of what we
+            // want. We do our own adaptive noise gate inside FFTCore.
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+            let input = engine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buf, time in
                 self?.handle(buffer: buf, time: time)
             }
         case .none: break

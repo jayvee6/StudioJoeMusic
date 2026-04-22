@@ -34,6 +34,14 @@ public final class FFTCore: @unchecked Sendable {
     // when input goes quiet; jumps instantly to new peaks.
     private var peakFloor: Float = 0.0001
 
+    // Per-bin adaptive noise floor for spectral subtraction. Tracks the rolling
+    // minimum of each bin over ~20-30 s: fast descent to capture quiet moments,
+    // very slow relaxation up so the floor doesn't stick to a single past dip.
+    // The gate is meaningful when the input is the microphone (room noise vs.
+    // music); for clean file-mixer input the floor stays near zero and the
+    // subtraction is a no-op.
+    private var noiseFloor: [Float]
+
     public init(fftSize: Int = 2048, binCount: Int = 32) {
         precondition(fftSize > 0 && (fftSize & (fftSize - 1)) == 0,
                      "fftSize must be a power of 2")
@@ -58,6 +66,9 @@ public final class FFTCore: @unchecked Sendable {
         self.melBoundaries = FFTCore.computeMelBoundaries(fftSize: fftSize,
                                                           binCount: binCount)
         self.binGain = FFTCore.computeBinGain(binCount: binCount)
+        // Initialize high so the first few frames aren't gated — the gate
+        // activates only after the tracker has seen some quiet bins.
+        self.noiseFloor = [Float](repeating: 0.01, count: binCount)
     }
 
     deinit { vDSP_destroy_fftsetup(fftSetup) }
@@ -119,6 +130,23 @@ public final class FFTCore: @unchecked Sendable {
                 vDSP_vmul(bPtr.baseAddress!, 1, gPtr.baseAddress!, 1,
                           bPtr.baseAddress!, 1, vDSP_Length(binCount))
             }
+        }
+
+        // Adaptive noise gate — spectral subtraction with per-bin minimum
+        // tracking. Strong descent (v=binned[b] < floor → learn over ~5
+        // frames) captures quiet moments; gentle relaxation (×1.00005/frame
+        // ≈ 0.4%/sec at 86fps) keeps the floor from sticking. 1.8x
+        // over-subtraction multiplier gives a clear margin so music clearly
+        // above ambient stays intact while persistent noise gets zeroed.
+        for b in 0..<binCount {
+            let v = binned[b]
+            if v < noiseFloor[b] {
+                noiseFloor[b] = v * 0.2 + noiseFloor[b] * 0.8
+            } else {
+                noiseFloor[b] *= 1.00005
+            }
+            let gated = v - noiseFloor[b] * 1.8
+            binned[b] = gated > 0 ? gated : 0
         }
 
         // Exponential peak AGC — replaces per-frame max normalization.
