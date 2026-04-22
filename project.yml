@@ -38,6 +38,7 @@ targets:
       properties:
         CFBundleDisplayName: StudioJoe Music
         NSAppleMusicUsageDescription: "Pick a song from your library to play through the visualizer."
+        NSMicrophoneUsageDescription: "Reads ambient audio on-device so the visualizer can react to music playing nearby. Audio is processed locally and never recorded or sent anywhere."
         SPOTIFY_CLIENT_ID: "$(SPOTIFY_CLIENT_ID)"
         CFBundleURLTypes:
           - CFBundleURLName: dev.studiojoe.StudioJoeMusic.spotify

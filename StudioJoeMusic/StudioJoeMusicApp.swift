@@ -11,6 +11,7 @@ struct StudioJoeMusicApp: App {
         let catalog = SpotifyCatalog(auth: spotifyAuth)
         let appleMusicKit = AppleMusicKitClient()
         let playback = SpotifyPlaybackSource()
+        let conductor = AudioConductor()
 
         var deps = VisualizerViewModel.Dependencies()
         deps.metadataService = TrackMetadataService(spotifyCatalog: catalog)
@@ -20,12 +21,19 @@ struct StudioJoeMusicApp: App {
         deps.spotifyPlayback = playback
 
         let vm = VisualizerViewModel(
-            conductor: AudioConductor(),
+            conductor: conductor,
             deps: deps
         )
         _viewModel = StateObject(wrappedValue: vm)
         _spotifyPlayback = StateObject(wrappedValue: playback)
         MediaLibraryPermission.request { _ in }
+
+        // Silently request mic access and enable ambient capture. The first
+        // launch shows the system permission prompt; subsequent launches
+        // restore from the granted status without UI. No "mic is live" badge
+        // in the UI — per product direction, mic is infrastructure, not
+        // user-facing state. All audio processing stays on-device.
+        Task { _ = await conductor.enableMicCapture() }
     }
 
     var body: some Scene {

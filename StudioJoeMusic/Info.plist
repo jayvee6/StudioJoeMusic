@@ -39,6 +39,8 @@
 	</array>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Pick a song from your library to play through the visualizer.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Reads ambient audio on-device so the visualizer can react to music playing nearby. Audio is processed locally and never recorded or sent anywhere.</string>
 	<key>SPOTIFY_CLIENT_ID</key>
 	<string>$(SPOTIFY_CLIENT_ID)</string>
 	<key>UIApplicationSceneManifest</key>
