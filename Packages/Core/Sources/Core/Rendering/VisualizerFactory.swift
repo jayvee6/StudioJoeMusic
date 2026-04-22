@@ -175,6 +175,8 @@ public enum VisualizerFactory {
             return try makeLunar(context: context, pixelFormat: pixelFormat)
         case .kaleidoScope:
             return try makeKaleido(context: context, pixelFormat: pixelFormat)
+        case .cosmicWave:
+            return try CosmicWaveRenderer(context: context, pixelFormat: pixelFormat)
         }
     }
 
