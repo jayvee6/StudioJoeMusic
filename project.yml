@@ -43,6 +43,8 @@ targets:
           - CFBundleURLName: dev.studiojoe.StudioJoeMusic.spotify
             CFBundleURLSchemes:
               - studiojoe-musicplayer
+        LSApplicationQueriesSchemes:
+          - spotify
         UILaunchScreen:
           UIImageName: ""
         UIApplicationSceneManifest:

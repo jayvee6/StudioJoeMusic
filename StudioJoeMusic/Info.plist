@@ -33,6 +33,10 @@
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>spotify</string>
+	</array>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Pick a song from your library to play through the visualizer.</string>
 	<key>SPOTIFY_CLIENT_ID</key>

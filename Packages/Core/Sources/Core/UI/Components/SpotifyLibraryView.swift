@@ -216,14 +216,15 @@ public struct SpotifyLibraryView: View {
     }
 
     private func play(_ track: SpotifyTrack) {
-        guard let url = track.previewURL else { return }
+        // Prefer full-track via SPTAppRemote when the SDK is connected;
+        // playSpotify handles the SDK-vs-preview routing internally.
         Task {
-            await viewModel.play(
-                remoteURL: url,
-                title: track.name,
+            await viewModel.playSpotify(
+                trackID: track.id,
+                name: track.name,
                 artist: track.primaryArtist,
-                durationSec: Double(track.duration_ms) / 1000.0,
-                source: .spotify(id: track.id)
+                previewURL: track.previewURL,
+                durationSec: Double(track.duration_ms) / 1000.0
             )
             onDismiss()
         }
