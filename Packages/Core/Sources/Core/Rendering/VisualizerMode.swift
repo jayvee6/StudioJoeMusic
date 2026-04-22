@@ -13,6 +13,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
     case rorschach
     case lunar
     case kaleidoScope
+    case cosmicWave
 
     public var id: Int { rawValue }
 
@@ -30,6 +31,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .rorschach:    return "Inkblot"
         case .lunar:        return "Lunar"
         case .kaleidoScope: return "Kaleido"
+        case .cosmicWave:   return "Cosmic"
         }
     }
 
@@ -47,6 +49,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .rorschach:    return "oval.fill"
         case .lunar:        return "moon.fill"
         case .kaleidoScope: return "hexagon.fill"
+        case .cosmicWave:   return "atom"
         }
     }
 
