@@ -6,10 +6,14 @@ public struct SettingsView: View {
     @State private var appleMusicStatus: MPMediaLibraryAuthorizationStatus =
         MPMediaLibrary.authorizationStatus()
     @ObservedObject var viewModel: VisualizerViewModel
+    @ObservedObject var spotifyPlayback: SpotifyPlaybackSource
     public var onDismiss: () -> Void
 
-    public init(viewModel: VisualizerViewModel, onDismiss: @escaping () -> Void) {
+    public init(viewModel: VisualizerViewModel,
+                spotifyPlayback: SpotifyPlaybackSource,
+                onDismiss: @escaping () -> Void) {
         self.viewModel = viewModel
+        self.spotifyPlayback = spotifyPlayback
         self.onDismiss = onDismiss
     }
 
@@ -19,6 +23,7 @@ public struct SettingsView: View {
                 analysisSection
                 appleMusicSection
                 spotifySection
+                spotifyPlaybackSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -92,22 +97,25 @@ public struct SettingsView: View {
 
     private var sourceIcon: String {
         switch viewModel.activeAnalysisSource {
-        case .synthetic: return "antenna.radiowaves.left.and.right"
-        case .tap:       return "waveform"
+        case .synthetic:            return "antenna.radiowaves.left.and.right"
+        case .syntheticFromPreview: return "waveform.path"
+        case .tap:                  return "waveform"
         }
     }
 
     private var sourceIconColor: Color {
         switch viewModel.activeAnalysisSource {
-        case .synthetic: return StudioJoeColors.accent
-        case .tap:       return StudioJoeColors.label3
+        case .synthetic:            return StudioJoeColors.accent
+        case .syntheticFromPreview: return StudioJoeColors.label2
+        case .tap:                  return StudioJoeColors.label3
         }
     }
 
     private var sourceLabel: String {
         switch viewModel.activeAnalysisSource {
-        case .synthetic: return "Synthetic (Spotify)"
-        case .tap:       return "Live tap"
+        case .synthetic:            return "Synthetic (Spotify)"
+        case .syntheticFromPreview: return "Synthetic (preview)"
+        case .tap:                  return "Live tap"
         }
     }
 
@@ -260,6 +268,85 @@ public struct SettingsView: View {
             return "Connected"
         }
         return "Not connected"
+    }
+
+    // MARK: - Spotify Playback (SPTAppRemote)
+
+    private var spotifyPlaybackSection: some View {
+        Section {
+            HStack {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(StudioJoeColors.label2)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Spotify Playback")
+                        .foregroundStyle(StudioJoeColors.label1)
+                    Text(spotifyPlaybackStatusText)
+                        .font(.footnote)
+                        .foregroundStyle(StudioJoeColors.label3)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+
+            if spotifyPlayback.isConnected, let track = spotifyPlayback.currentTrack {
+                HStack {
+                    Image(systemName: spotifyPlayback.isPlaying ? "waveform" : "pause.fill")
+                        .foregroundStyle(StudioJoeColors.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(track.name)
+                            .font(.footnote)
+                            .foregroundStyle(StudioJoeColors.label1)
+                            .lineLimit(1)
+                        Text(track.artistName)
+                            .font(.footnote)
+                            .foregroundStyle(StudioJoeColors.label3)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            if spotifyPlayback.isConnected {
+                Button(role: .destructive) {
+                    spotifyPlayback.disconnect()
+                } label: {
+                    Label("Disconnect", systemImage: "xmark.circle")
+                }
+            } else {
+                Button {
+                    _ = spotifyPlayback.connect()
+                } label: {
+                    HStack {
+                        if spotifyPlayback.isAuthorizing {
+                            ProgressView().tint(StudioJoeColors.accent)
+                        }
+                        Label(spotifyPlayback.isAuthorizing ? "Opening Spotify…" : "Connect Spotify App",
+                              systemImage: "app.connected.to.app.below.fill")
+                            .foregroundStyle(StudioJoeColors.accent)
+                    }
+                }
+                .disabled(spotifyPlayback.isAuthorizing)
+            }
+
+            if let err = spotifyPlayback.lastError {
+                Text(err)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .lineLimit(3)
+            }
+        } header: {
+            Text("Spotify Playback")
+        } footer: {
+            Text("Plays full tracks via the installed Spotify app. Requires Spotify Premium. Tapping Connect opens Spotify to authorize.")
+        }
+        .listRowBackground(Color.white.opacity(0.06))
+    }
+
+    private var spotifyPlaybackStatusText: String {
+        if spotifyPlayback.isConnected { return "Connected — full-track playback enabled" }
+        if spotifyPlayback.isAuthorizing { return "Opening Spotify app…" }
+        return "Not connected — preview-only playback"
     }
 
     // MARK: - About

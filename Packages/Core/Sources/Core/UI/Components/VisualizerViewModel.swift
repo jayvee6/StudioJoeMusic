@@ -31,8 +31,19 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     @Published public private(set) var activeAnalysisSource: ActiveAnalysisSource = .tap
 
     public enum ActiveAnalysisSource: Equatable {
-        case tap              // FFT from file mixer
-        case synthetic        // Spotify /v1/audio-analysis → CADisplayLink
+        case tap                    // FFT from file mixer
+        case synthetic              // Spotify /v1/audio-analysis → CADisplayLink
+        case syntheticFromPreview   // Apple Music 30-sec preview, FFT'd offline and looped
+    }
+
+    /// Which system is owning audio playback right now. Transport controls,
+    /// position/duration, and title/artist all dispatch through this.
+    @Published public private(set) var playbackBackend: PlaybackBackend = .idle
+
+    public enum PlaybackBackend: Equatable {
+        case idle
+        case conductor       // local audio via AudioConductor (file or system player)
+        case spotifyApp      // full-track via SPTAppRemote (Spotify iOS SDK)
     }
 
     private let conductor: AudioConductor
@@ -40,23 +51,38 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     private var metadataService: TrackMetadataService?
     private var analysisClient: SpotifyAnalysisClient?
     private var appleMusicKit: AppleMusicKitClient?
+    private var previewAnalysisService: PreviewAnalysisService?
+    /// Spotify iOS SDK playback wrapper. Stored so a future integration step
+    /// can route full-track playback through SPTAppRemote; currently unused at
+    /// call sites — the VM owns the reference, the Settings UI drives it
+    /// directly via a separate @ObservedObject handoff.
+    private var spotifyPlayback: SpotifyPlaybackSource?
     private var metadataTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
     /// Remembered source of the most recent track, so the Settings toggle can
     /// re-kick synthetic analysis mid-track without requiring a reload.
     private var lastTrackSource: TrackSource = .unknown
+    /// Captured at track-load time so the preview fallback path has everything
+    /// it needs without a second MPMediaItem round-trip.
+    private var lastPersistentID: UInt64?
+    private var lastTrackDuration: Double = 0
+    private var lastBPMHint: Double?
 
     public init(conductor: AudioConductor,
                 binCount: Int = 32,
                 metadataService: TrackMetadataService? = nil,
                 analysisClient: SpotifyAnalysisClient? = nil,
-                appleMusicKit: AppleMusicKitClient? = nil) {
+                appleMusicKit: AppleMusicKitClient? = nil,
+                previewAnalysisService: PreviewAnalysisService? = nil,
+                spotifyPlayback: SpotifyPlaybackSource? = nil) {
         self.conductor = conductor
         self.binCount = binCount
         self.magnitudes = Array(repeating: 0, count: binCount)
         self.metadataService = metadataService
         self.analysisClient = analysisClient
         self.appleMusicKit = appleMusicKit
+        self.previewAnalysisService = previewAnalysisService
+        self.spotifyPlayback = spotifyPlayback
         super.init()
         startDisplayLoop()
     }
@@ -92,10 +118,17 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         } else {
             source = .appleUnknown
         }
+        // Capture the context the preview fallback needs, before resetMetadata()
+        // clears analysis state.
+        lastPersistentID = item.persistentID
+        lastTrackDuration = item.playbackDuration
+        lastBPMHint = bpm
+
         resetMetadata()
         do {
             try await conductor.load(item: item)
             conductor.play()
+            playbackBackend = .conductor
             errorMessage = nil
             fetchMetadata(for: source)
             activateAnalysisIfAvailable(source: source)
@@ -111,6 +144,12 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                      artist: String?,
                      durationSec: TimeInterval = 0,
                      source: TrackSource = .unknown) async {
+        // Remote URLs (Spotify previews, downloaded mp3s) run through the
+        // file-mixer tap; the preview-clip fallback is Apple-Music-specific.
+        lastPersistentID = nil
+        lastTrackDuration = durationSec
+        lastBPMHint = nil
+
         resetMetadata()
         do {
             try await conductor.load(remoteURL: remoteURL,
@@ -118,6 +157,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                                      artist: artist,
                                      durationSec: durationSec)
             conductor.play()
+            playbackBackend = .conductor
             errorMessage = nil
             fetchMetadata(for: source)
             activateAnalysisIfAvailable(source: source)
@@ -125,6 +165,62 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
             errorMessage = Self.verboseMessage(for: error)
             print("[VisualizerViewModel] remote load error: \(error as NSError)")
         }
+    }
+
+    /// Play a Spotify track. If the Spotify iOS SDK is connected (`Settings →
+    /// Spotify Playback → Connect`), plays the FULL track via SPTAppRemote
+    /// through the Spotify app (Premium required — audio comes out wherever
+    /// Spotify is currently routing, e.g. AirPods). Otherwise falls back to
+    /// the 30-second preview clip via the file mixer.
+    ///
+    /// Either way, `activateAnalysisIfAvailable(source:)` kicks off the
+    /// `/v1/audio-analysis` fetch so the visualizer reacts to the real DSP.
+    public func playSpotify(trackID: String,
+                            name: String,
+                            artist: String,
+                            previewURL: URL?,
+                            durationSec: TimeInterval) async {
+        let source = TrackSource.spotify(id: trackID)
+
+        // SDK path: full-track via SPTAppRemote.
+        if let sdk = spotifyPlayback, sdk.isConnected {
+            // Stop any local playback so the conductor isn't holding the route.
+            conductor.stop()
+            lastPersistentID = nil
+            lastTrackDuration = durationSec
+            lastBPMHint = nil
+
+            resetMetadata()
+            do {
+                try await sdk.play(uri: "spotify:track:\(trackID)")
+                playbackBackend = .spotifyApp
+                errorMessage = nil
+                fetchMetadata(for: source)
+                activateAnalysisIfAvailable(source: source)
+                return
+            } catch {
+                // SDK play failed (Spotify app closed, not Premium, etc.).
+                // Fall back to preview if one is available; otherwise surface.
+                let ns = error as NSError
+                print("[VisualizerViewModel] SDK play failed: \(ns.domain)(\(ns.code)) — \(ns.localizedDescription)")
+                if previewURL == nil {
+                    errorMessage = Self.verboseMessage(for: error)
+                    return
+                }
+                // else fall through to preview path below
+            }
+        }
+
+        // Preview fallback.
+        guard let preview = previewURL else {
+            errorMessage = "No preview available. Connect Spotify in Settings for full-track playback."
+            return
+        }
+        await play(remoteURL: preview,
+                   title: name,
+                   artist: artist,
+                   durationSec: durationSec,
+                   source: source)
     }
 
     private func resetMetadata() {
@@ -150,42 +246,80 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// Fire-and-forget analysis fetch. On success, swaps AudioConductor to the
-    /// synthetic source so the visualizer reads Spotify-computed bands instead
-    /// of the file-mixer FFT. Silently no-ops on failure — the tap path
-    /// remains active as the fallback (or stays silent if no tap is installed,
-    /// e.g. DRM Apple Music tracks playing via MPMusicPlayerController).
+    /// Fire-and-forget analysis fetch with a two-tier fallback:
+    ///   Tier 1: Spotify `/v1/audio-analysis` (direct track ID, or via ISRC lookup)
+    ///   Tier 2: offline FFT of the MusicKit 30-second preview clip, looped
+    ///
+    /// On success, swaps AudioConductor to the synthetic source so the
+    /// visualizer reads pre-computed bands instead of the file-mixer FFT.
+    /// Silently no-ops on total failure — the tap path remains active as the
+    /// floor fallback (or stays silent for DRM Apple Music tracks with no
+    /// tappable audio route).
     private func activateAnalysisIfAvailable(source: TrackSource) {
-        guard preferSyntheticAnalysis,
-              let client = analysisClient else { return }
+        guard preferSyntheticAnalysis else { return }
         lastTrackSource = source
+
+        // Capture @MainActor-isolated state up front so the Task body uses
+        // plain values and only needs cross-actor hops for explicit awaits.
+        let client = analysisClient
+        let previewService = previewAnalysisService
+        let meta = metadataService
+        let pid = lastPersistentID
+        let duration = lastTrackDuration
+        let bpmHint = lastBPMHint
+        let bins = binCount
 
         analysisTask = Task { [weak self] in
             guard let self else { return }
-            let trackID: String?
-            switch source {
-            case .spotify(let id):
-                trackID = id
-            case .appleWithISRC:
-                // Resolve ISRC → Spotify track ID via the metadata service.
-                trackID = await self.metadataService?.resolveSpotifyTrackID(for: source)
-            case .appleWithBPM, .appleUnknown, .unknown:
-                trackID = nil
-            }
-            guard let id = trackID else { return }
-            if Task.isCancelled { return }
 
-            do {
-                let analysis = try await client.analysis(for: id)
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    let driver = SyntheticAnalysisDriver(analysis: analysis, binCount: self.binCount)
-                    self.conductor.setAnalysisSource(.synthetic(driver))
-                    self.activeAnalysisSource = .synthetic
+            // Tier 1: Spotify analysis by track ID (direct or resolved from ISRC).
+            if let client {
+                let trackID: String?
+                switch source {
+                case .spotify(let id):
+                    trackID = id
+                case .appleWithISRC:
+                    trackID = await meta?.resolveSpotifyTrackID(for: source)
+                case .appleWithBPM, .appleUnknown, .unknown:
+                    trackID = nil
                 }
-            } catch {
-                // Analysis 404s on ~15% of tracks; stay on tap silently.
-                print("[VisualizerViewModel] synthetic analysis unavailable for \(id): \(error.localizedDescription)")
+                if let id = trackID {
+                    if Task.isCancelled { return }
+                    do {
+                        let analysis = try await client.analysis(for: id)
+                        if Task.isCancelled { return }
+                        await MainActor.run {
+                            let driver = SyntheticAnalysisDriver(analysis: analysis, binCount: bins)
+                            self.conductor.setAnalysisSource(.synthetic(driver))
+                            self.activeAnalysisSource = .synthetic
+                        }
+                        return
+                    } catch {
+                        // Analysis 404s on ~15% of tracks. Don't stop here —
+                        // fall through to the preview-clip tier.
+                        print("[VisualizerViewModel] synthetic analysis unavailable for \(id): \(error.localizedDescription)")
+                    }
+                }
+            }
+
+            // Tier 2: preview-clip FFT fallback (Apple Music library only).
+            if let previewService, let pid, duration > 0 {
+                if Task.isCancelled { return }
+                do {
+                    let analysis = try await previewService.analysis(
+                        for: pid,
+                        trackDurationSec: duration,
+                        bpmHint: bpmHint
+                    )
+                    if Task.isCancelled { return }
+                    await MainActor.run {
+                        let driver = SyntheticAnalysisDriver(analysis: analysis, binCount: bins)
+                        self.conductor.setAnalysisSource(.synthetic(driver))
+                        self.activeAnalysisSource = .syntheticFromPreview
+                    }
+                } catch {
+                    print("[VisualizerViewModel] preview fallback unavailable for pid=\(pid): \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -219,21 +353,95 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     }
 
     public func togglePlayPause() {
-        conductor.isPlaying ? conductor.pause() : conductor.play()
+        switch playbackBackend {
+        case .conductor:
+            conductor.isPlaying ? conductor.pause() : conductor.play()
+        case .spotifyApp:
+            guard let sdk = spotifyPlayback else { return }
+            let playing = sdk.isPlaying
+            Task {
+                do {
+                    if playing { try await sdk.pause() } else { try await sdk.resume() }
+                } catch {
+                    print("[VisualizerViewModel] SDK toggle failed: \(error.localizedDescription)")
+                }
+            }
+        case .idle:
+            break
+        }
     }
 
-    public func stop() { conductor.stop() }
+    public func stop() {
+        switch playbackBackend {
+        case .conductor: conductor.stop()
+        case .spotifyApp:
+            if let sdk = spotifyPlayback {
+                Task { try? await sdk.pause() }
+            }
+        case .idle: break
+        }
+        playbackBackend = .idle
+    }
 
-    public func seek(to seconds: Double) { conductor.seek(to: seconds) }
-    public func rewind(by seconds: Double = 10) { conductor.rewind(by: seconds) }
-    public func fastForward(by seconds: Double = 10) { conductor.fastForward(by: seconds) }
+    public func seek(to seconds: Double) {
+        switch playbackBackend {
+        case .conductor: conductor.seek(to: seconds)
+        case .spotifyApp:
+            guard let sdk = spotifyPlayback else { return }
+            Task { try? await sdk.seek(to: seconds) }
+        case .idle: break
+        }
+    }
 
-    public var isPlaying: Bool { conductor.isPlaying }
-    public var positionSec: Double { conductor.positionSec }
-    public var durationSec: Double { conductor.durationSec }
+    public func rewind(by seconds: Double = 10) {
+        seek(to: max(0, positionSec - seconds))
+    }
+
+    public func fastForward(by seconds: Double = 10) {
+        seek(to: min(durationSec, positionSec + seconds))
+    }
+
+    public var isPlaying: Bool {
+        switch playbackBackend {
+        case .conductor:  return conductor.isPlaying
+        case .spotifyApp: return spotifyPlayback?.isPlaying ?? false
+        case .idle:       return false
+        }
+    }
+
+    public var positionSec: Double {
+        switch playbackBackend {
+        case .conductor:  return conductor.positionSec
+        case .spotifyApp: return spotifyPlayback?.positionSec ?? 0
+        case .idle:       return 0
+        }
+    }
+
+    public var durationSec: Double {
+        switch playbackBackend {
+        case .conductor:  return conductor.durationSec
+        case .spotifyApp: return spotifyPlayback?.currentTrack?.durationSec ?? 0
+        case .idle:       return 0
+        }
+    }
+
     public var mode: PlaybackMode { conductor.mode }
-    public var currentTitle: String? { conductor.currentTitle }
-    public var currentArtist: String? { conductor.currentArtist }
+
+    public var currentTitle: String? {
+        switch playbackBackend {
+        case .conductor:  return conductor.currentTitle
+        case .spotifyApp: return spotifyPlayback?.currentTrack?.name
+        case .idle:       return nil
+        }
+    }
+
+    public var currentArtist: String? {
+        switch playbackBackend {
+        case .conductor:  return conductor.currentArtist
+        case .spotifyApp: return spotifyPlayback?.currentTrack?.artistName
+        case .idle:       return nil
+        }
+    }
 
     private func startDisplayLoop() {
         let link = CADisplayLink(target: self, selector: #selector(tick(_:)))

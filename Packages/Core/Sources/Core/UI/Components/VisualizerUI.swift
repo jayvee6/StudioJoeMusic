@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct VisualizerUI: View {
     @ObservedObject public var viewModel: VisualizerViewModel
+    @ObservedObject public var spotifyPlayback: SpotifyPlaybackSource
     @State private var showPicker = false
     @State private var showSpotify = false
     @State private var showSettings = false
@@ -13,8 +14,9 @@ public struct VisualizerUI: View {
     @State private var showModeLabel = false
     @State private var modeLabelTask: Task<Void, Never>?
 
-    public init(viewModel: VisualizerViewModel) {
+    public init(viewModel: VisualizerViewModel, spotifyPlayback: SpotifyPlaybackSource) {
         self.viewModel = viewModel
+        self.spotifyPlayback = spotifyPlayback
     }
 
     public var body: some View {
@@ -70,7 +72,9 @@ public struct VisualizerUI: View {
             }
         }
         .sheet(isPresented: $showSettings) {
-            SettingsView(viewModel: viewModel) { showSettings = false }
+            SettingsView(viewModel: viewModel, spotifyPlayback: spotifyPlayback) {
+                showSettings = false
+            }
         }
         .alert("Playback error",
                isPresented: Binding(
