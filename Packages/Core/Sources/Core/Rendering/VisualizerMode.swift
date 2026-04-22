@@ -11,6 +11,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
     case emojiWaves
     case ferrofluid
     case rorschach
+    case lunar
 
     public var id: Int { rawValue }
 
@@ -26,6 +27,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .emojiWaves:  return "Waves"
         case .ferrofluid:  return "Ferro"
         case .rorschach:   return "Inkblot"
+        case .lunar:       return "Lunar"
         }
     }
 
@@ -41,6 +43,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .emojiWaves:  return "wave.3.right"
         case .ferrofluid:  return "waveform.path.ecg"
         case .rorschach:   return "oval.fill"
+        case .lunar:       return "moon.fill"
         }
     }
 
