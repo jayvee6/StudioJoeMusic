@@ -116,6 +116,20 @@ public struct LunarUniforms {
     public var tempoBPM: Float = 120
 }
 
+public struct KaleidoUniforms {
+    public var camZ: Float = 0          // CPU-accumulated tunnel depth
+    public var hue: Float = 0           // 0..1, CPU-accumulated hue rotation
+    public var bass: Float = 0
+    public var mid: Float = 0
+    public var treble: Float = 0
+    public var twist: Float = 0         // CPU-accumulated mid-freq twist
+    public var resolution: SIMD2<Float> = .zero
+    public var valence: Float = 0.5
+    public var energy: Float = 0.5
+    public var danceability: Float = 0.5
+    public var tempoBPM: Float = 120
+}
+
 // MARK: - State structs
 
 public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
@@ -130,6 +144,7 @@ public struct VortexState  {
 }
 public struct WavesState   { public var waveSpin: Float = 0 }
 public struct LunarState   { public var rotY: Float = 0 }
+public struct KaleidoState { public var camZ: Float = 0; public var hue: Float = 0; public var twist: Float = 0 }
 
 // MARK: - Factory
 
@@ -158,6 +173,8 @@ public enum VisualizerFactory {
             return try makeRorschach(context: context, pixelFormat: pixelFormat)
         case .lunar:
             return try makeLunar(context: context, pixelFormat: pixelFormat)
+        case .kaleidoScope:
+            return try makeKaleido(context: context, pixelFormat: pixelFormat)
         }
     }
 
@@ -409,6 +426,38 @@ public enum VisualizerFactory {
                 rotY: state.rotY,
                 bass: a.bass,
                 treble: a.treble,
+                resolution: res,
+                valence: a.valence,
+                energy: a.energy,
+                danceability: a.danceability,
+                tempoBPM: a.tempoBPM
+            )
+        }
+    }
+
+    private static func makeKaleido(context: MetalContext,
+                                    pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+        try FragmentRenderer<KaleidoUniforms, KaleidoState>(
+            context: context, pixelFormat: pixelFormat,
+            vertexFunction: "kaleido_vs", fragmentFunction: "kaleido_fs",
+            label: "KaleidoScope",
+            initialState: KaleidoState()
+        ) { state, a, dt, res in
+            let normDt = dt * 60.0
+            // Fly forward — base speed + danceability + beat pulse burst
+            state.camZ  += (0.008 + a.danceability * 0.012 + a.beatPulse * 0.025) * normDt
+            // Hue cycles with treble-driven speed
+            state.hue   += (0.4 + a.treble * 2.0) * normDt / 360.0
+            state.hue   -= floor(state.hue)
+            // Twist accumulates from mid frequencies, giving the tunnel a growing spiral
+            state.twist += a.mid * 0.018 * normDt
+            return KaleidoUniforms(
+                camZ: state.camZ,
+                hue: state.hue,
+                bass: a.bass,
+                mid: a.mid,
+                treble: a.treble,
+                twist: state.twist,
                 resolution: res,
                 valence: a.valence,
                 energy: a.energy,
