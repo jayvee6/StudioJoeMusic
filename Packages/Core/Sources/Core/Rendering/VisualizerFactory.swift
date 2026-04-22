@@ -177,6 +177,8 @@ public enum VisualizerFactory {
             return try makeKaleido(context: context, pixelFormat: pixelFormat)
         case .cosmicWave:
             return try CosmicWaveRenderer(context: context, pixelFormat: pixelFormat)
+        case .dvdMode:
+            return nil
         }
     }
 

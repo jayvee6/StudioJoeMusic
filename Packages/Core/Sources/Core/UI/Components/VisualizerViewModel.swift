@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Combine
 import MediaPlayer
 import QuartzCore
@@ -16,6 +17,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
     @Published public private(set) var currentBPM: Double = 0
     @Published public private(set) var isBeatDetected: Bool = false
     @Published public private(set) var metadataFeatures: TrackFeatures = TrackFeatures()
+    @Published public private(set) var currentArtwork: UIImage?
     @Published public var errorMessage: String?
 
     public let binCount: Int
@@ -142,6 +144,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
             try await conductor.load(item: item)
             conductor.play()
             playbackBackend = .conductor
+            currentArtwork = item.artwork?.image(at: CGSize(width: 512, height: 512))
             errorMessage = nil
             fetchMetadata(for: source)
             activateAnalysisIfAvailable()
@@ -158,6 +161,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                      source: TrackSource = .unknown) async {
         // Remote URLs (Spotify previews, downloaded mp3s) run through the
         // file-mixer tap; the preview-clip fallback is Apple-Music-specific.
+        currentArtwork = nil
         lastTrack = LastTrackContext(
             source: source,
             persistentID: nil,
@@ -196,6 +200,7 @@ public final class VisualizerViewModel: NSObject, ObservableObject {
                             previewURL: URL?,
                             durationSec: TimeInterval) async {
         let source = TrackSource.spotify(id: trackID)
+        currentArtwork = nil
 
         // SDK path: full-track via SPTAppRemote.
         if let sdk = deps.spotifyPlayback, sdk.isConnected {

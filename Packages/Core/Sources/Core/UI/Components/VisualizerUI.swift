@@ -90,6 +90,9 @@ public struct VisualizerUI: View {
         if currentMode.isMetal {
             MetalVisualizerView(viewModel: viewModel, mode: currentMode)
                 .ignoresSafeArea()
+        } else if currentMode == .dvdMode {
+            DVDModeView(viewModel: viewModel)
+                .ignoresSafeArea()
         } else {
             spectrumCanvas
         }
