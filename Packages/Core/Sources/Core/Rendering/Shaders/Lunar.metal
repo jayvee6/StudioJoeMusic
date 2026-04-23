@@ -54,7 +54,59 @@ static float lfbm(float3 p) {
     return v;
 }
 
-// ── Moon SDF ─────────────────────────────────────────────────────────────────
+// ── Hi-res bump map (shading-only — never fed into the SDF) ──────────────────
+// Three widely-separated scale bands: coarse terrain, mid rock, fine grit.
+// Using independent noise lookups (not FBM-chained) so each band stays crisp
+// and the bump doesn't devolve into mush at high frequency.
+static float bumpHeight(float3 p) {
+    float h = 0.0;
+    h += ln3(p *  6.0 + float3( 1.3, 2.7, 8.1)) * 0.50;   // coarse terrain
+    h += ln3(p * 18.0 + float3(11.7, 3.1, 5.9)) * 0.28;   // mid rock
+    h += ln3(p * 55.0 + float3( 2.9, 7.3, 1.1)) * 0.14;   // fine grit
+    return h;
+}
+
+// Finite-difference gradient of the bump height (6 samples, central differences).
+static float3 bumpGrad(float3 p) {
+    const float e = 0.0025;
+    float2 k = float2(e, 0.0);
+    float  inv2e = 1.0 / (2.0 * e);
+    return float3(
+        bumpHeight(p + k.xyy) - bumpHeight(p - k.xyy),
+        bumpHeight(p + k.yxy) - bumpHeight(p - k.yxy),
+        bumpHeight(p + k.yyx) - bumpHeight(p - k.yyx)) * inv2e;
+}
+
+// Micro-crater field — hash-sampled inside a cell grid. Returns an albedo
+// darkening factor (0 = no crater here, 1 = strong dimple). The bumpHeight
+// function above already supplies high-frequency normal perturbation, so this
+// only darkens albedo rather than producing bump normals.
+static float microCraterDarken(float3 p, float cellScale) {
+    float3 pS   = p * cellScale;
+    float3 cell = floor(pS);
+    float3 frac = fract(pS);
+    float  dark = 0.0;
+    for (int dz = -1; dz <= 1; dz++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                float3 offset = float3(dx, dy, dz);
+                float3 ncell  = cell + offset;
+                float  r1     = lh1(ncell);
+                if (r1 < 0.70) continue;                     // ~30% of cells have a crater
+                float  r2     = lh1(ncell + 77.3);
+                float3 center = offset + float3(r2, fract(r1 * 43.0), fract(r2 * 91.0)) * 0.7 + 0.15;
+                float  cR     = 0.12 + r2 * 0.25;
+                float  d      = length(frac - center) / cR;
+                if (d >= 1.0) continue;
+                float bowl = 1.0 - d * d;                    // quadratic falloff
+                dark += bowl * (0.15 + r2 * 0.20);
+            }
+        }
+    }
+    return dark;
+}
+
+// ── Moon SDF (kept smooth/low-freq so raymarching stays well-behaved) ────────
 
 // Quartic bowl: smooth depression, C¹ at rim. Per-crater Lipschitz ≈ 0.12.
 static float craterBowl(float3 p, float3 c, float r) {
@@ -66,7 +118,7 @@ static float craterBowl(float3 p, float3 c, float r) {
 static float moonSDF(float3 p, float bass) {
     float R   = 0.65 + bass * 0.04;
     float sdf = length(p) - R;
-    // Craters spread across the full sphere so all rotation angles look interesting
+    // Named craters — big enough to affect the silhouette
     sdf += craterBowl(p, normalize(float3( 0.30,  0.55,  0.78)) * R, 0.22);
     sdf += craterBowl(p, normalize(float3(-0.55,  0.20,  0.81)) * R, 0.15);
     sdf += craterBowl(p, normalize(float3( 0.12, -0.60,  0.79)) * R, 0.17);
@@ -75,7 +127,7 @@ static float moonSDF(float3 p, float bass) {
     sdf += craterBowl(p, normalize(float3(-0.10,  0.83,  0.55)) * R, 0.14);
     sdf += craterBowl(p, normalize(float3( 0.40, -0.55, -0.74)) * R, 0.19);
     sdf += craterBowl(p, normalize(float3(-0.70,  0.25, -0.67)) * R, 0.13);
-    sdf += (lfbm(p * 4.0) - 0.5) * 0.025;   // fine surface roughness
+    sdf += (lfbm(p * 4.0) - 0.5) * 0.025;   // low-freq silhouette roughness
     return sdf;
 }
 
@@ -104,7 +156,6 @@ static float3 lrotX(float3 p, float a) {
 static float starField(float3 dir, float time, float treble) {
     float3 d = normalize(dir);
     float  s = 0.0;
-    // Bright sparse layer with treble-driven twinkling
     {
         float3 cell = floor(d * 100.0);
         float  r    = lh1(cell);
@@ -113,7 +164,6 @@ static float starField(float3 dir, float time, float treble) {
             s += twinkle;
         }
     }
-    // Faint dense layer — no twinkling
     {
         float3 cell = floor(d * 160.0);
         float  r    = lh1(cell + float3(7.3, 2.1, 9.8));
@@ -132,10 +182,9 @@ fragment float4 lunar_fs(LVSOut in [[stage_in]],
     float3 ro = float3(0.0, 0.0, 2.5);
     float3 rd = normalize(float3(uv, -1.4));
 
-    const float tilt   = 0.18;    // ~10° axis tilt for realism
-    const float boundR = 0.75;    // bounding sphere radius (R_base + margins)
+    const float tilt   = 0.18;
+    const float boundR = 0.75;
 
-    // Fast reject: ray vs bounding sphere centred at origin
     float  b2   = dot(ro, rd);
     float  disc = b2 * b2 - (dot(ro, ro) - boundR * boundR);
 
@@ -153,7 +202,6 @@ fragment float4 lunar_fs(LVSOut in [[stage_in]],
 
         for (int i = 0; i < 80; i++) {
             float3 wp = ro + rd * t;
-            // Rotate world point into moon-local space (inverse of moon rotation)
             float3 lp = lrotX(lrotY(wp, -u.rotY), -tilt);
             float  d  = moonSDF(lp, u.bass);
             if (d < 0.001) { hit = true; hitLocal = lp; break; }
@@ -162,25 +210,85 @@ fragment float4 lunar_fs(LVSOut in [[stage_in]],
         }
 
         if (hit) {
-            float3 n = moonNormal(hitLocal, u.bass);
+            // ── Base geometric normal from the SDF ───────────────────────────
+            float3 nGeom = moonNormal(hitLocal, u.bass);
 
-            // Albedo: FBM-driven dark maria vs bright highlands
+            // ── High-frequency bump: perturb normal in the tangent plane ─────
+            // Removes the component of the bump gradient parallel to the
+            // geometric normal so we only tilt within the tangent plane —
+            // otherwise the bump would rotate the silhouette and look broken
+            // at grazing angles.
+            float3 bg       = bumpGrad(hitLocal);
+            float3 tangGrad = bg - dot(bg, nGeom) * nGeom;
+            float3 n = normalize(nGeom - tangGrad * 0.045);
+
+            // Micro-crater albedo darkening (normal detail already handled by
+            // bumpGrad's 55× scale band).
+            float microDark = microCraterDarken(hitLocal, 26.0);
+
+            // ── Multi-scale albedo ───────────────────────────────────────────
+            // Macro: dark maria vs bright highlands
             float mariaV = lfbm(hitLocal * 1.9 + 3.1);
-            float alb    = mix(0.22, 0.82, smoothstep(0.38, 0.62, mariaV));
-            float3 surf  = float3(alb) * float3(0.87, 0.90, 0.93);
+            float mariaM = smoothstep(0.38, 0.62, mariaV);
+            // Meso: rocky mottle across medium patches
+            float rockyV = lfbm(hitLocal * 7.5 + 11.0);
+            // Micro: dusty fine grit
+            float dustV  = lfbm(hitLocal * 24.0 + 3.3);
 
-            // Cool directional moonlight
-            float3 L   = normalize(float3(-0.9, 1.3, 0.7));
-            float  NdL = max(0.0, dot(n, L));
-            // Soft terminator roll-off instead of hard shadow boundary
-            float  lit = smoothstep(0.0, 0.12, NdL) * NdL;
+            float alb = mix(0.22, 0.82, mariaM);
+            alb *= mix(0.82, 1.14, rockyV);
+            alb *= mix(0.92, 1.08, dustV);
+            // Micro-crater dark spots further darken the albedo
+            alb *= (1.0 - microDark * 0.22);
+            alb  = clamp(alb, 0.14, 0.95);
 
-            col = surf * float3(0.92, 0.95, 1.0) * (0.04 + lit);
-            col *= (1.0 + u.energy * 0.25);
+            // Slightly cooler tint on highlands, warmer on maria (subtle)
+            float3 surfTint = mix(float3(0.85, 0.88, 0.91),    // maria (warmer, duskier)
+                                  float3(0.90, 0.92, 0.95),    // highlands (cooler)
+                                  mariaM);
+            float3 surf = float3(alb) * surfTint;
 
-            // Limb darkening — grazing-angle surfaces appear darker
+            // ── Lighting: distant orbiting "sun" point light ─────────────────
+            // The sun lives in WORLD space and its position drifts so the
+            // terminator sweeps naturally across the moon as the moon rotates.
+            // A slow elevation wobble keeps the shadow line from being boringly
+            // vertical. Converted into moon-local space for dot products with
+            // the local-space surface normal.
+            float  sunOrbit = u.time * 0.08;                        // ~78s / rev
+            float  sunElev  = 0.32 + 0.14 * sin(u.time * 0.035);
+            float  ce       = cos(sunElev);
+            float3 sunWorld = float3(cos(sunOrbit) * ce,
+                                     sin(sunElev),
+                                     sin(sunOrbit) * ce) * 6.0;     // r = 6 units
+            float3 sunLocal = lrotX(lrotY(sunWorld, -u.rotY), -tilt);
+
+            float3 toSun   = sunLocal - hitLocal;
+            float  sunDist = length(toSun);
+            float3 L       = toSun / sunDist;
+
+            // Gentle inverse-square-ish falloff — clamped so the whole moon
+            // stays visible under natural conditions
+            float sunAtten = clamp(36.0 / (sunDist * sunDist), 0.75, 1.15);
+
+            float NdL = max(0.0, dot(n, L));
+            // Soft terminator roll-off — the shadow line is never a hard edge
+            float lit = smoothstep(0.0, 0.14, NdL) * NdL;
+
+            // Warm sunlight tint (slight yellow), cool ambient sky fill (blue)
+            float3 sunColor = float3(1.00, 0.96, 0.88);
+            float3 skyFill  = float3(0.32, 0.40, 0.55);
+
+            col  = surf * sunColor * lit * sunAtten;
+            // Earthshine-style ambient fill from above, subtle
+            col += surf * skyFill * 0.035 * max(0.25, 0.5 + 0.5 * nGeom.y);
+            // Very faint base ambient so unlit side isn't pure black
+            col += surf * 0.015;
+
+            col *= (1.0 + u.energy * 0.20);
+
+            // Limb darkening
             float3 V   = normalize(lrotX(lrotY(-rd, -u.rotY), -tilt));
-            float  NdV = max(0.0, dot(n, V));
+            float  NdV = max(0.0, dot(nGeom, V));
             col *= (0.45 + 0.55 * NdV);
         } else {
             showBg = true;
@@ -190,7 +298,6 @@ fragment float4 lunar_fs(LVSOut in [[stage_in]],
     if (showBg) {
         float  s   = starField(rd, u.time, u.treble);
         col = float3(s) * float3(0.92, 0.95, 1.0);
-        // Faint nebula haze tinted by mood valence
         float  neb = lfbm(float3(rd.xy * 0.9 + float2(u.time * 0.012, 0.3), 0.5));
         float3 nc  = mix(float3(0.0, 0.01, 0.04), float3(0.02, 0.0, 0.05), u.valence);
         col += nc * neb * 0.35;
