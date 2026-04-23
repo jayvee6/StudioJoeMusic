@@ -209,6 +209,8 @@ public enum VisualizerFactory {
             return nil
         case .fireworks:
             return nil   // rendered by FireworksView (SwiftUI Canvas), not Metal
+        case .spectrogram:
+            return try SpectrogramRenderer(context: context, pixelFormat: pixelFormat)
         }
     }
 
