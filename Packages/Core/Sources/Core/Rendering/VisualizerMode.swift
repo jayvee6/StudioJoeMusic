@@ -15,6 +15,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
     case kaleidoScope
     case dvdMode
     case fireworks
+    case cosmicWave
 
     public var id: Int { rawValue }
 
@@ -34,6 +35,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .kaleidoScope: return "Kaleido"
         case .dvdMode:      return "DVD"
         case .fireworks:    return "Fireworks"
+        case .cosmicWave:   return "Cosmic"
         }
     }
 
@@ -53,6 +55,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .kaleidoScope: return "hexagon.fill"
         case .dvdMode:      return "tv.fill"
         case .fireworks:    return "party.popper.fill"
+        case .cosmicWave:   return "atom"
         }
     }
 
