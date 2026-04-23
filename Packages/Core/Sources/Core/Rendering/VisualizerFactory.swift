@@ -232,6 +232,49 @@ public struct SiriWaveformUniforms {
     }
 }
 
+// Neon Oscilloscope — 4 additive neon ribbons drawn in a single fragment
+// pass. Layout MUST match Shaders/NeonOscilloscope.metal (48 bytes total):
+//   offset  0: time        (Float)        — seconds, monotonic
+//   offset  4: beatPulse   (Float)        — 0..1
+//   offset  8: _pad0       (Float)        — align bandEnergy to 16B
+//   offset 12: _pad1       (Float)
+//   offset 16: bandEnergy  (SIMD4<Float>) — per-ribbon band mean:
+//                                           .x=magenta(lows), .y=cyan(low-mids),
+//                                           .z=purple(mids),  .w=blue(full)
+//   offset 32: resolution  (SIMD2<Float>) — drawable px
+//   offset 40: _pad2       (Float)
+//   offset 44: _pad3       (Float)
+// SIMD4<Float> needs 16B alignment; the two pad floats land it there.
+// The trailing pads round the struct up to a 16B multiple.
+public struct NeonOscilloscopeUniforms {
+    public var time: Float
+    public var beatPulse: Float
+    public var _pad0: Float
+    public var _pad1: Float
+    public var bandEnergy: SIMD4<Float>
+    public var resolution: SIMD2<Float>
+    public var _pad2: Float
+    public var _pad3: Float
+
+    public init(time: Float = 0,
+                beatPulse: Float = 0,
+                _pad0: Float = 0,
+                _pad1: Float = 0,
+                bandEnergy: SIMD4<Float> = .zero,
+                resolution: SIMD2<Float> = .zero,
+                _pad2: Float = 0,
+                _pad3: Float = 0) {
+        self.time = time
+        self.beatPulse = beatPulse
+        self._pad0 = _pad0
+        self._pad1 = _pad1
+        self.bandEnergy = bandEnergy
+        self.resolution = resolution
+        self._pad2 = _pad2
+        self._pad3 = _pad3
+    }
+}
+
 // Wire Terrain — vertex-shader FBM displaces a 30×30 plane (128×128 subdivs)
 // and the fragment maps height to a violet→blue→cyan palette. MeshRenderer
 // binds this struct at vertex-index 1 and fragment-index 0 (see
@@ -306,6 +349,7 @@ public struct WavesState   { public var waveSpin: Float = 0 }
 public struct LunarState   { public var rotY: Float = 0 }
 public struct KaleidoState { public var camZ: Float = 0; public var hue: Float = 0; public var twist: Float = 0 }
 public struct SiriWaveformState { public var clock: Float = 0 }
+public struct NeonOscilloscopeState { public var clock: Float = 0 }
 
 // Wire Terrain — `clock` is monotonic (drives FBM noise time; never resets
 // mid-session). `orbit` is a separate accumulator for the camera angle so
@@ -357,6 +401,8 @@ public enum VisualizerFactory {
             return try makeSiriWaveform(context: context, pixelFormat: pixelFormat)
         case .wireTerrain:
             return try makeWireTerrain(context: context, pixelFormat: pixelFormat)
+        case .neonOscilloscope:
+            return try makeNeonOscilloscope(context: context, pixelFormat: pixelFormat)
         }
     }
 
@@ -721,6 +767,55 @@ public enum VisualizerFactory {
             let e3 = bandMean(mags, 21, 31)
 
             return SiriWaveformUniforms(
+                time: state.clock,
+                beatPulse: a.beatPulse,
+                _pad0: 0,
+                _pad1: 0,
+                bandEnergy: SIMD4<Float>(e0, e1, e2, e3),
+                resolution: res,
+                _pad2: 0,
+                _pad3: 0
+            )
+        }
+    }
+
+    private static func makeNeonOscilloscope(context: MetalContext,
+                                             pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+        // Per-ribbon band ranges — mirror viz/neon-oscilloscope.js `LAYERS`:
+        //   ribbon 0 (magenta, lows)      bands  0..4
+        //   ribbon 1 (cyan,    low-mids)  bands  5..12
+        //   ribbon 2 (purple,  mids)      bands 13..20
+        //   ribbon 3 (blue,    full)      bands 21..31
+        // Parity note: web calls the 3rd ribbon "highs" in RIBBON_BANDS but
+        // its bass is frequency-range 13..20 which is mid-range; we keep the
+        // frequency ranges, which are the actual parity contract.
+        // See .claude/skills/studiojoe-viz/references/parity.md.
+        return try FragmentRenderer<NeonOscilloscopeUniforms, NeonOscilloscopeState>(
+            context: context, pixelFormat: pixelFormat,
+            vertexFunction: "neonosc_vs", fragmentFunction: "neonosc_fs",
+            label: "NeonOscilloscope",
+            initialState: NeonOscilloscopeState()
+        ) { state, a, dt, res in
+            state.clock += dt
+
+            // Mean mel-bin magnitude within each ribbon's range. Clamped
+            // `hi` against the live bin count so a short magnitudes array
+            // (synthetic driver, preview, etc.) doesn't read past end.
+            func bandMean(_ mags: [Float], _ lo: Int, _ hi: Int) -> Float {
+                guard lo >= 0, !mags.isEmpty else { return 0 }
+                let hiClamp = min(hi, mags.count - 1)
+                if lo > hiClamp { return 0 }
+                var sum: Float = 0
+                for i in lo...hiClamp { sum += mags[i] }
+                return sum / Float(hiClamp - lo + 1)
+            }
+            let mags = a.magnitudes
+            let e0 = bandMean(mags,  0,  4)   // magenta lows
+            let e1 = bandMean(mags,  5, 12)   // cyan low-mids
+            let e2 = bandMean(mags, 13, 20)   // purple mids
+            let e3 = bandMean(mags, 21, 31)   // blue full
+
+            return NeonOscilloscopeUniforms(
                 time: state.clock,
                 beatPulse: a.beatPulse,
                 _pad0: 0,
