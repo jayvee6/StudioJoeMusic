@@ -32,6 +32,7 @@ public final class MeshRenderer<U, State>: VisualizerRenderer {
     private let depthFormat: MTLPixelFormat
     private let vertexBuffer: MTLBuffer
     private let vertexCount: Int
+    private let triangleFillMode: MTLTriangleFillMode
     private var depthTexture: MTLTexture?
     private var state: State
     private let step: (inout State, AudioFrame, Float, SIMD2<Float>) -> U
@@ -46,6 +47,7 @@ public final class MeshRenderer<U, State>: VisualizerRenderer {
                 vertexCount: Int,
                 vertexStride: Int,
                 depthFormat: MTLPixelFormat = .depth32Float,
+                triangleFillMode: MTLTriangleFillMode = .fill,
                 initialState: State,
                 step: @escaping (inout State, AudioFrame, Float, SIMD2<Float>) -> U) throws {
         self.context = context
@@ -53,6 +55,7 @@ public final class MeshRenderer<U, State>: VisualizerRenderer {
         self.step = step
         self.vertexCount = vertexCount
         self.depthFormat = depthFormat
+        self.triangleFillMode = triangleFillMode
 
         guard let vertex = context.library.makeFunction(name: vertexFunction),
               let fragment = context.library.makeFunction(name: fragmentFunction) else {
@@ -150,6 +153,10 @@ public final class MeshRenderer<U, State>: VisualizerRenderer {
         enc.label = pipeline.label
         enc.setRenderPipelineState(pipeline)
         enc.setDepthStencilState(depthState)
+        // `.lines` draws triangle edges only — lets a plane-subdivided mesh
+        // render as a wireframe grid without a separate line-geometry buffer.
+        // Default `.fill` preserves existing behavior for all prior callers.
+        enc.setTriangleFillMode(triangleFillMode)
 
         enc.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         withUnsafeBytes(of: &u) { bytes in
