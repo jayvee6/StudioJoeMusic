@@ -93,6 +93,9 @@ public struct VisualizerUI: View {
         } else if currentMode == .dvdMode {
             DVDModeView(viewModel: viewModel)
                 .ignoresSafeArea()
+        } else if currentMode == .fireworks {
+            FireworksView(viewModel: viewModel)
+                .ignoresSafeArea()
         } else {
             spectrumCanvas
         }
