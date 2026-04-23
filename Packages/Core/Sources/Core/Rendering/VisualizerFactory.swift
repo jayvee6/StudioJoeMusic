@@ -191,6 +191,53 @@ public struct SiriWaveformUniforms {
     }
 }
 
+// Wire Terrain — vertex-shader FBM displaces a 30×30 plane (128×128 subdivs)
+// and the fragment maps height to a violet→blue→cyan palette. MeshRenderer
+// binds this struct at vertex-index 1 and fragment-index 0 (see
+// Shaders/WireTerrain.metal). Layout MUST match the Metal struct exactly:
+//
+//   offset   0 — projectionMatrix (float4x4, 64 B, 16-byte aligned)
+//   offset  64 — viewMatrix       (float4x4, 64 B, 16-byte aligned)
+//   offset 128 — time             (Float)
+//   offset 132 — bass             (Float)
+//   offset 136 — treble           (Float)
+//   offset 140 — beatPulse        (Float)
+//   offset 144 — resolution       (SIMD2<Float>, 8 B, 8-byte aligned)
+//   offset 152 — fogDensity       (Float) — web FogExp2(0x000008, 0.035)
+//   offset 156 — _pad0            (Float) — round total to 16-byte multiple
+//   Total: 160 bytes.
+public struct WireTerrainUniforms {
+    public var projectionMatrix: simd_float4x4
+    public var viewMatrix:       simd_float4x4
+    public var time:             Float
+    public var bass:             Float
+    public var treble:           Float
+    public var beatPulse:        Float
+    public var resolution:       SIMD2<Float>
+    public var fogDensity:       Float
+    public var _pad0:            Float
+
+    public init(projectionMatrix: simd_float4x4 = matrix_identity_float4x4,
+                viewMatrix:       simd_float4x4 = matrix_identity_float4x4,
+                time:             Float = 0,
+                bass:             Float = 0,
+                treble:           Float = 0,
+                beatPulse:        Float = 0,
+                resolution:       SIMD2<Float> = .zero,
+                fogDensity:       Float = 0.035,
+                _pad0:            Float = 0) {
+        self.projectionMatrix = projectionMatrix
+        self.viewMatrix = viewMatrix
+        self.time = time
+        self.bass = bass
+        self.treble = treble
+        self.beatPulse = beatPulse
+        self.resolution = resolution
+        self.fogDensity = fogDensity
+        self._pad0 = _pad0
+    }
+}
+
 // MARK: - State structs
 
 public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
@@ -218,6 +265,17 @@ public struct WavesState   { public var waveSpin: Float = 0 }
 public struct LunarState   { public var rotY: Float = 0 }
 public struct KaleidoState { public var camZ: Float = 0; public var hue: Float = 0; public var twist: Float = 0 }
 public struct SiriWaveformState { public var clock: Float = 0 }
+
+// Wire Terrain — `clock` is monotonic (drives FBM noise time; never resets
+// mid-session). `orbit` is a separate accumulator for the camera angle so
+// tuning the orbit speed doesn't drift the terrain noise phase. `hasInit`
+// guards first-frame setup so Chunk C's factory closure can initialize the
+// projection matrix exactly once.
+public struct WireTerrainState {
+    public var clock:   Float = 0
+    public var orbit:   Float = 0
+    public var hasInit: Bool  = false
+}
 
 // MARK: - Factory
 
