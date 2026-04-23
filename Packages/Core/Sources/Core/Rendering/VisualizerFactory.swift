@@ -103,19 +103,23 @@ public struct RorschachUniforms {
     public var danceability: Float
     public var tempoBPM: Float
     // Oscillating drift time — drives metaball node positions + breath. See
-    // RorschachState for the CPU-side oscillator. Replaces an earlier _metalPad
-    // field; same 48-byte layout so no shader binding change needed.
+    // RorschachState for the CPU-side oscillator.
     public var nodeT: Float
+    // Size multiplier (mirrors the web `size` slider). iOS has no slider for
+    // this yet; default 1.0. Appended after `nodeT`, preserving the float
+    // sequence. Total struct: 52 bytes.
+    public var sizeMul: Float
 
     public init(time: Float = 0, bass: Float = 0, mid: Float = 0, treble: Float = 0,
                 resolution: SIMD2<Float> = .zero, beatPulse: Float = 0,
                 valence: Float = 0.5, energy: Float = 0.5,
-                danceability: Float = 0.5, tempoBPM: Float = 120, nodeT: Float = 0) {
+                danceability: Float = 0.5, tempoBPM: Float = 120,
+                nodeT: Float = 0, sizeMul: Float = 1.0) {
         self.time = time; self.bass = bass; self.mid = mid; self.treble = treble
         self.resolution = resolution; self.beatPulse = beatPulse
         self.valence = valence; self.energy = energy
         self.danceability = danceability; self.tempoBPM = tempoBPM
-        self.nodeT = nodeT
+        self.nodeT = nodeT; self.sizeMul = sizeMul
     }
 }
 
@@ -390,11 +394,19 @@ public enum VisualizerFactory {
     private static func makeRorschach(context: MetalContext,
                                       pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
         // EMA smoothing time constants (seconds) — match web viz/rorschach.js.
-        // Short enough to track song structure, long enough to filter frame jitter.
-        let tauBass:   Float = 0.5
-        let tauMid:    Float = 0.8
-        let tauTreble: Float = 0.3
+        // Bass/treble snap fast, mid paces, beat is smoothed only for legacy
+        // state (the shader consumes raw beat for sharp punches — see below).
+        let tauBass:   Float = 0.25
+        let tauMid:    Float = 0.40
+        let tauTreble: Float = 0.30
         let tauBeat:   Float = 0.25
+
+        // iOS has no `drift` / `size` / `react` sliders yet; use web defaults.
+        // Mirroring the web `size` slider default (1.0) as a uniform so the
+        // fragment scales identically.
+        let driftMul: Float   = 1.0
+        let sizeMul:  Float   = 1.0
+        let reactMul: Float   = 1.0
 
         return try FragmentRenderer<RorschachUniforms, RorschachState>(
             context: context, pixelFormat: pixelFormat,
@@ -413,25 +425,29 @@ public enum VisualizerFactory {
             state.smBeat   += (a.beatPulse - state.smBeat)   * kBeat
             state.clock    += dtF
 
-            // Dual-time driver — monotonic `time` for edge noise (never plays
-            // backwards), oscillating `nodeT` for metaball positions + breath
-            // (sloshes forward and back). Matches web viz/rorschach.js.
+            // Dual-time driver — monotonic `time` for FBM edge noise (never
+            // plays backwards), oscillating `nodeT` for metaball positions +
+            // breath (sweeps forward and back). Matches web viz/rorschach.js:
+            //   nodeT = (sin(t*0.30)*6 + sin(t*0.19)*3) * drift
             let clock = state.clock
-            let nodeT = (sinf(clock * 0.30) * 6.0 + sinf(clock * 0.19) * 3.0)
+            let nodeT = (sinf(clock * 0.30) * 6.0 + sinf(clock * 0.19) * 3.0) * driftMul
 
-            // Raw beatPulse passes through for sharp per-beat drop punches.
+            // Raw beatPulse (× react) passes through for sharp per-beat punches
+            // on the splatter droplets + edge-glow flare — mirror of
+            // `u_beatSharp = (f.beatPulse || 0) * react` in viz/rorschach.js.
             return RorschachUniforms(
                 time: clock,
-                bass: state.smBass,
+                bass: state.smBass * reactMul,
                 mid: state.smMid,
-                treble: state.smTreble,
+                treble: state.smTreble * reactMul,
                 resolution: res,
-                beatPulse: a.beatPulse,
+                beatPulse: a.beatPulse * reactMul,
                 valence: a.valence,
                 energy: a.energy,
                 danceability: a.danceability,
                 tempoBPM: a.tempoBPM,
-                nodeT: nodeT
+                nodeT: nodeT,
+                sizeMul: sizeMul
             )
         }
     }
