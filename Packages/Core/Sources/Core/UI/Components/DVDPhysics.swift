@@ -32,15 +32,20 @@ final class DVDPhysics: ObservableObject {
     private var speedBoost: CGFloat = 0
     private var cornerLabelTask: Task<Void, Never>?
 
+    // Rainbow cycle — party-mode hue that loops every ~5 s, speeds up on bass.
+    private var hue: CGFloat = 0
+    private let baseHueRate: CGFloat = 0.20   // cycles per second at rest
+
     func start(screenSize: CGSize, artwork: UIImage?) {
         self.screenSize = screenSize
         position = CGPoint(
             x: screenSize.width * 0.30,
             y: screenSize.height * 0.25
         )
-        if let art = artwork {
-            accentColor = Self.dominantColor(from: art)
-        }
+        // Seed the rainbow at a random hue so re-entering the mode doesn't
+        // always start on red.
+        hue = CGFloat.random(in: 0..<1)
+        accentColor = Self.rainbowColor(at: hue)
         if UIAccessibility.isReduceMotionEnabled {
             velocity = CGVector(dx: 18, dy: 14)
         }
@@ -64,7 +69,9 @@ final class DVDPhysics: ObservableObject {
     }
 
     func updateArtwork(_ art: UIImage?) {
-        accentColor = art.map { Self.dominantColor(from: $0) } ?? .white
+        // Artwork-driven tint is intentionally disabled in party mode; the
+        // rainbow cycle in `tick` owns `accentColor` from here on.
+        _ = art
     }
 
     @objc private func tick(_ link: CADisplayLink) {
@@ -118,6 +125,13 @@ final class DVDPhysics: ObservableObject {
         glowPulse = max(0, glowPulse - dt * 2.5)
         screenFlash = max(0, screenFlash - dt * 3.0)
 
+        // Party-mode rainbow cycle. speedBoost (set from bass hits) briefly
+        // accelerates the cycle so the color pops on beats.
+        let hueRate = baseHueRate + speedBoost * 0.35
+        hue += hueRate * dt
+        if hue >= 1 { hue -= floor(hue) }
+        accentColor = Self.rainbowColor(at: hue)
+
         if !particles.isEmpty {
             let gravity: CGFloat = 200
             particles = particles.compactMap { p in
@@ -165,35 +179,8 @@ final class DVDPhysics: ObservableObject {
         }
     }
 
-    // Simple pixel-average with saturation boost so grey album art still produces
-    // a tinted glow rather than a flat-white one.
-    private static func dominantColor(from image: UIImage) -> Color {
-        guard let cgImage = image.cgImage else { return .white }
-        let w = 16, h = 16
-        var raw = [UInt8](repeating: 0, count: w * h * 4)
-        let cs = CGColorSpaceCreateDeviceRGB()
-        guard let ctx = CGContext(data: &raw, width: w, height: h, bitsPerComponent: 8,
-                                  bytesPerRow: w * 4, space: cs,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            return .white
-        }
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
-
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
-        let n = w * h
-        for i in 0..<n {
-            let o = i * 4
-            r += CGFloat(raw[o])     / 255
-            g += CGFloat(raw[o + 1]) / 255
-            b += CGFloat(raw[o + 2]) / 255
-        }
-        let fn = CGFloat(n)
-        let avg = (r + g + b) / (3 * fn)
-        let boost: CGFloat = 1.5
-        let rr = min(1, max(0, avg + (r / fn - avg) * boost))
-        let gg = min(1, max(0, avg + (g / fn - avg) * boost))
-        let bb = min(1, max(0, avg + (b / fn - avg) * boost))
-        return Color(red: Double(rr), green: Double(gg), blue: Double(bb))
+    private static func rainbowColor(at hue: CGFloat) -> Color {
+        Color(hue: Double(hue), saturation: 0.95, brightness: 1.0)
     }
 
     deinit {
