@@ -14,6 +14,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
     case lunar
     case kaleidoScope
     case dvdMode
+    case fireworks
 
     public var id: Int { rawValue }
 
@@ -32,6 +33,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .lunar:        return "Lunar"
         case .kaleidoScope: return "Kaleido"
         case .dvdMode:      return "DVD"
+        case .fireworks:    return "Fireworks"
         }
     }
 
@@ -50,11 +52,12 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .lunar:        return "moon.fill"
         case .kaleidoScope: return "hexagon.fill"
         case .dvdMode:      return "tv.fill"
+        case .fireworks:    return "party.popper.fill"
         }
     }
 
     public var isMetal: Bool {
-        self != .bars && self != .dvdMode
+        self != .bars && self != .dvdMode && self != .fireworks
     }
 
     public var needsEmojiAtlas: Bool {

@@ -203,6 +203,8 @@ public enum VisualizerFactory {
             return try makeKaleido(context: context, pixelFormat: pixelFormat)
         case .dvdMode:
             return nil
+        case .fireworks:
+            return nil   // rendered by FireworksView (SwiftUI Canvas), not Metal
         }
     }
 
