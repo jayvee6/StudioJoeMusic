@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>studiojoe-viz — showcase</title>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --bg-card: #14141c;
+  --bg-card-hover: #1e1e2a;
+  --fg: #f2f2f7;
+  --fg-dim: #8a8a99;
+  --accent: #7dd3fc;
+  --accent-2: #f0abfc;
+  --border: #2a2a38;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 800px at 15% -10%, rgba(125,211,252,0.09), transparent 55%),
+    radial-gradient(1000px 700px at 95% 110%, rgba(240,171,252,0.07), transparent 55%),
+    var(--bg);
+  padding: 48px 24px 96px;
+}
+.wrap { max-width: 1100px; margin: 0 auto; }
+header { margin-bottom: 40px; }
+.eyebrow { text-transform: uppercase; font-size: 11px; letter-spacing: 0.18em; color: var(--accent); margin-bottom: 10px; font-weight: 600; }
+h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 14px; background: linear-gradient(120deg, var(--fg), var(--accent-2) 60%, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { font-size: 16px; line-height: 1.55; color: var(--fg-dim); max-width: 640px; }
+.lede code { background: #1a1a26; padding: 1px 6px; border-radius: 4px; font-size: 13px; color: var(--accent); font-family: "SF Mono", ui-monospace, monospace; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; margin-top: 32px; }
+.card {
+  display: block;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+  position: relative;
+  overflow: hidden;
+}
+.card:hover { background: var(--bg-card-hover); border-color: #3a3a4c; transform: translateY(-2px); }
+.card::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); opacity: 0; transition: opacity 0.2s; }
+.card:hover::before { opacity: 1; }
+.num { font-family: "SF Mono", ui-monospace, monospace; font-size: 11px; color: var(--fg-dim); margin-bottom: 8px; }
+.card h2 { font-size: 19px; font-weight: 600; margin-bottom: 6px; letter-spacing: -0.01em; }
+.card p { font-size: 13px; line-height: 1.5; color: var(--fg-dim); margin-bottom: 14px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-family: "SF Mono", ui-monospace, monospace; font-size: 10px; background: #1f1f2c; color: var(--accent); border: 1px solid #2a2a3d; padding: 3px 8px; border-radius: 999px; letter-spacing: 0.02em; }
+.tag.mag { color: var(--accent-2); border-color: #3a2a44; }
+footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); line-height: 1.6; }
+footer code { font-family: "SF Mono", ui-monospace, monospace; color: var(--accent); }
+footer a { color: var(--accent-2); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">studiojoe-viz · showcase</div>
+    <h1>Five techniques. Five self-contained demos.</h1>
+    <p class="lede">Each page is a standalone HTML file — no build step, no server. Open one and it runs. The audio is faked (sine-based pulses) so you can see the reactivity without wiring up Spotify or a mic. These are the patterns documented in <code>references/patterns.md</code>, <code>pbr.md</code>, and <code>performance.md</code>, applied to one-off prototypes.</p>
+  </header>
+
+  <div class="grid">
+    <a class="card" href="fluid-ink.html">
+      <div class="num">01</div>
+      <h2>Fluid Ink</h2>
+      <p>Bilateral metaball SDF with dual-time drift. Monotonic time drives the jagged edge noise; an oscillating node-time sloshes the ink sideways like a tilting canvas.</p>
+      <div class="tags"><span class="tag">SDF</span><span class="tag">metaballs</span><span class="tag mag">dual-time drift</span></div>
+    </a>
+    <a class="card" href="chrome-orb.html">
+      <div class="num">02</div>
+      <h2>Chrome Orb</h2>
+      <p>Physically-based icosahedron with metalness 1.0 + ACES tone mapping + UnrealBloom. Procedural PMREM environment map supplies the reflected stage lights.</p>
+      <div class="tags"><span class="tag">PBR</span><span class="tag">envMap</span><span class="tag mag">bloom</span></div>
+    </a>
+    <a class="card" href="kaleidoscope.html">
+      <div class="num">03</div>
+      <h2>Kaleidoscope Tunnel</h2>
+      <p>Single full-screen fragment shader. 6-fold polar fold with mid-driven twist, tunnel depth accumulator, HSL palette rotation, ring + spoke gem flares.</p>
+      <div class="tags"><span class="tag">fragment</span><span class="tag">polar fold</span><span class="tag mag">HSL</span></div>
+    </a>
+    <a class="card" href="particle-waves.html">
+      <div class="num">04</div>
+      <h2>Particle Waves</h2>
+      <p>Canvas 2D. 400 particles on sinusoidal paths with persistent trails. Beat onsets trigger a radial expansion and color flip; between beats, the field drifts.</p>
+      <div class="tags"><span class="tag">Canvas 2D</span><span class="tag">particles</span><span class="tag mag">beat-reactive</span></div>
+    </a>
+    <a class="card" href="wire-terrain.html">
+      <div class="num">05</div>
+      <h2>Wire Terrain</h2>
+      <p>Three.js PlaneGeometry with vertex-shader displacement. Three-octave noise + bass-driven amplitude. Wireframe material + slowly orbiting camera.</p>
+      <div class="tags"><span class="tag">vertex shader</span><span class="tag">displacement</span><span class="tag mag">wireframe</span></div>
+    </a>
+  </div>
+
+  <footer>
+    <p>All demos use <code>three@0.128</code> via CDN. The fake audio frame mirrors <code>window.AudioEngine.currentFrame()</code> so code transplants into the registry cleanly. Each file is a valid starting point for a <code>musicplayer-viz/prototypes/</code> entry. See the skill's <a href="../references/new-viz-recipe.md">new-viz-recipe.md</a> for the full Phase 1 → Phase 4 integration path.</p>
+  </footer>
+</div>
+</body>
+</html>

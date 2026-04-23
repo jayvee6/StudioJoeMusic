@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wire Terrain — studiojoe-viz showcase</title>
+<style>
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; }
+.nav { position: fixed; top: 16px; left: 16px; z-index: 10; display: flex; gap: 10px; }
+.nav a { color: #f2f2f7; text-decoration: none; font-size: 12px; background: rgba(0,0,0,0.5); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); }
+.nav a:hover { background: rgba(0,0,0,0.7); }
+.title { position: fixed; bottom: 20px; left: 20px; z-index: 10; color: #f2f2f7; }
+.title h1 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+.title p { font-size: 11px; color: #8a8a99; margin: 0; font-family: "SF Mono", ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← showcase</a></div>
+<div class="title">
+  <h1>Wire Terrain</h1>
+  <p>vertex displacement · 3-octave noise · bass-driven amplitude · orbiting camera</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x000008, 0.035);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 8, 16);
+camera.lookAt(0, 0, 0);
+
+// Vertex shader does the heavy lifting — hashed noise + 3-octave FBM displaces
+// each vertex on the Y axis. Color varies by height via varying.
+const VS = `
+uniform float u_time;
+uniform float u_bass;
+uniform float u_treble;
+uniform float u_beatPulse;
+varying float vHeight;
+varying vec2 vXZ;
+
+float hash2(vec2 p) {
+  p = fract(p * vec2(127.1, 311.7));
+  p += dot(p, p + 19.19);
+  return fract(p.x * p.y);
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), u.x),
+             mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) {
+    v += a * vnoise(p);
+    p = p * 2.0 + vec2(3.14, 1.59);
+    a *= 0.5;
+  }
+  return v;
+}
+
+void main() {
+  vec3 pos = position;
+  // Scroll the noise forward over time — gives the "flying over terrain" feel
+  vec2 p = pos.xz * 0.15 + vec2(0.0, u_time * 0.35);
+  float n = fbm(p);
+  float n2 = fbm(p * 2.7 + vec2(7.1, 3.3));
+  float h = (n - 0.5) * (2.5 + u_bass * 3.5) + (n2 - 0.5) * (0.6 + u_treble * 0.8);
+  h += u_beatPulse * 0.9;
+  pos.y = h;
+
+  vHeight = h;
+  vXZ = pos.xz;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+`;
+
+const FS = `
+precision highp float;
+uniform float u_beatPulse;
+uniform float u_bass;
+varying float vHeight;
+varying vec2 vXZ;
+
+void main() {
+  // Height → hue mapping: deep valleys magenta, peaks cyan
+  float h01 = clamp((vHeight + 2.5) / 6.0, 0.0, 1.0);
+  vec3 low  = vec3(0.55, 0.10, 0.75);
+  vec3 mid  = vec3(0.20, 0.40, 0.95);
+  vec3 high = vec3(0.20, 0.95, 0.90);
+  vec3 col = mix(low, mid, smoothstep(0.0, 0.55, h01));
+  col      = mix(col, high, smoothstep(0.45, 1.0, h01));
+
+  // Subtle grid-cell tint so the wireframe reads structured, not uniform
+  float cell = sin(vXZ.x * 2.0) * sin(vXZ.y * 2.0);
+  col *= 0.85 + 0.15 * cell;
+
+  // Bass punches overall brightness
+  col *= 0.8 + u_bass * 0.45 + u_beatPulse * 0.3;
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+const geo = new THREE.PlaneGeometry(30, 30, 128, 128);
+geo.rotateX(-Math.PI / 2);
+const mat = new THREE.ShaderMaterial({
+  uniforms: {
+    u_time:      { value: 0 },
+    u_bass:      { value: 0 },
+    u_treble:    { value: 0 },
+    u_beatPulse: { value: 0 },
+  },
+  vertexShader: VS,
+  fragmentShader: FS,
+  wireframe: true,
+});
+const mesh = new THREE.Mesh(geo, mat);
+scene.add(mesh);
+
+// A second, solid-fill layer beneath the wireframe — subtle glow through the grid
+const mat2 = new THREE.ShaderMaterial({
+  uniforms: mat.uniforms,
+  vertexShader: VS,
+  fragmentShader: `
+    precision highp float;
+    varying float vHeight;
+    void main() {
+      float h01 = clamp((vHeight + 2.5) / 6.0, 0.0, 1.0);
+      gl_FragColor = vec4(vec3(0.03, 0.01, 0.08) + vec3(0.05, 0.02, 0.12) * h01, 1.0);
+    }
+  `,
+  side: THREE.DoubleSide,
+  depthWrite: true,
+  polygonOffset: true,
+  polygonOffsetFactor: 1,
+  polygonOffsetUnits: 1,
+});
+scene.add(new THREE.Mesh(geo, mat2));
+
+function fakeFrame(t) {
+  return {
+    bass:      (Math.sin(t * 0.45) + 1) * 0.5,
+    treble:    (Math.sin(t * 1.6)  + 1) * 0.5,
+    beatPulse: Math.max(0, Math.sin(t * 1.8)) ** 4,
+  };
+}
+
+const start = performance.now();
+function loop() {
+  const t = (performance.now() - start) / 1000;
+  const f = fakeFrame(t);
+
+  // Slowly orbiting camera — use an oscillating angle so it drifts back rather
+  // than purely circling (same sweep-feeling technique as patterns.md §1).
+  const cAng = Math.sin(t * 0.08) * 0.9 + t * 0.05;
+  const r = 14.0;
+  camera.position.set(Math.cos(cAng) * r, 7.5 + Math.sin(t * 0.3) * 1.2, Math.sin(cAng) * r);
+  camera.lookAt(0, 1.0 + f.bass * 0.8, 0);
+
+  const u = mat.uniforms;
+  u.u_time.value      = t;
+  u.u_bass.value      = f.bass;
+  u.u_treble.value    = f.treble;
+  u.u_beatPulse.value = f.beatPulse;
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+loop();
+</script>
+</body>
+</html>

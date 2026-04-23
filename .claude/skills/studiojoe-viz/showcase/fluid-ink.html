@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fluid Ink — studiojoe-viz showcase</title>
+<style>
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; }
+.nav { position: fixed; top: 16px; left: 16px; z-index: 10; display: flex; gap: 10px; }
+.nav a { color: #f2f2f7; text-decoration: none; font-size: 12px; background: rgba(0,0,0,0.5); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); }
+.nav a:hover { background: rgba(0,0,0,0.7); }
+.title { position: fixed; bottom: 20px; left: 20px; z-index: 10; color: #f2f2f7; }
+.title h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 4px; }
+.title p { font-size: 11px; color: #8a8a99; margin: 0; font-family: "SF Mono", ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← showcase</a></div>
+<div class="title">
+  <h1>Fluid Ink</h1>
+  <p>metaball SDF · dual-time drift · FBM edge noise</p>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const VS = `
+varying vec2 vUv;
+void main() { vUv = uv; gl_Position = vec4(position, 1.0); }
+`;
+
+const FS = `
+precision highp float;
+varying vec2 vUv;
+uniform float u_time;
+uniform float u_nodeT;
+uniform float u_bass;
+uniform float u_treble;
+uniform float u_beatSharp;
+uniform vec2  u_resolution;
+
+float smin(float a, float b, float k) {
+  float h = max(k - abs(a - b), 0.0) / k;
+  return min(a, b) - h * h * k * 0.25;
+}
+float hash2(vec2 p) {
+  p = fract(p * vec2(127.1, 311.7));
+  p += dot(p, p + 19.19);
+  return fract(p.x * p.y);
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash2(i), hash2(i + vec2(1,0)), u.x),
+             mix(hash2(i + vec2(0,1)), hash2(i + vec2(1,1)), u.x), u.y);
+}
+float fbm3(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 3; i++) {
+    v += a * (vnoise(p) - 0.5);
+    p = p * 2.1 + vec2(2.71, 1.83);
+    a *= 0.5;
+  }
+  return v;
+}
+
+float inkSDF(vec2 p, float nt, float scale, float speed, float beat) {
+  float d = 1e6;
+  // 7 metaball nodes on the right half-plane (bilateral fold doubles them)
+  {
+    vec2 n = vec2(0.030, 0.000) + vec2(sin(nt*0.31*speed)*0.018, cos(nt*0.27*speed)*0.025);
+    d = smin(d, length(p - n) - 0.09 * scale, 0.045);
+  }
+  {
+    vec2 n = vec2(0.220, 0.145) + vec2(sin(nt*0.41*speed+1.1)*0.032, cos(nt*0.37*speed+2.3)*0.028);
+    d = smin(d, length(p - n) - 0.078 * scale, 0.045);
+  }
+  {
+    vec2 n = vec2(0.225, -0.150) + vec2(sin(nt*0.29*speed+3.7)*0.030, cos(nt*0.43*speed+0.9)*0.028);
+    d = smin(d, length(p - n) - 0.076 * scale, 0.045);
+  }
+  {
+    vec2 n = vec2(0.330, 0.075) + vec2(sin(nt*0.53*speed+2.1)*0.038, cos(nt*0.23*speed+4.1)*0.032);
+    d = smin(d, length(p - n) - 0.062 * scale, 0.040);
+  }
+  {
+    vec2 n = vec2(0.315, -0.088) + vec2(sin(nt*0.47*speed+5.1)*0.036, cos(nt*0.61*speed+1.7)*0.032);
+    d = smin(d, length(p - n) - 0.060 * scale, 0.040);
+  }
+  // Outlier splatter nodes — punched by raw beat
+  float beatPulseR = 0.35 + beat * 1.65;
+  {
+    vec2 n = vec2(0.410, 0.240) + vec2(sin(nt*0.57*speed+1.8)*0.050, cos(nt*0.39*speed+3.1)*0.050);
+    d = smin(d, length(p - n) - 0.036 * scale * beatPulseR, 0.028);
+  }
+  {
+    vec2 n = vec2(0.395, -0.235) + vec2(sin(nt*0.49*speed+4.6)*0.045, cos(nt*0.33*speed+0.7)*0.050);
+    d = smin(d, length(p - n) - 0.034 * scale * beatPulseR, 0.028);
+  }
+  return d;
+}
+
+void main() {
+  float aspect = u_resolution.x / u_resolution.y;
+  vec2 uv = (vUv - 0.5) * vec2(aspect, 1.0);
+  vec2 p = vec2(abs(uv.x), uv.y);
+
+  float t  = u_time;
+  float nt = u_nodeT;
+
+  float breath = 1.0 + sin(nt*0.19)*0.035 + cos(nt*0.13)*0.020;
+  float scale  = breath * (1.0 + u_bass * 0.55 + u_beatSharp * 0.20);
+  float speed  = 0.65 + u_bass * 0.80;
+
+  float d = inkSDF(p, nt, scale, speed, u_beatSharp);
+
+  // Two-layer edge displacement
+  float splashKick = 1.0 + u_beatSharp * 0.6;
+  vec2 nCoord1 = p * 8.0  + vec2(t*0.20, t*0.15);
+  vec2 nCoord2 = p * 28.0 + vec2(t*0.13, -t*0.09);
+  float coarse = fbm3(nCoord1) * (0.050 + u_treble * 0.035) * splashKick;
+  float fine   = fbm3(nCoord2) * (0.018 + u_treble * 0.018) * splashKick;
+  d += coarse + fine;
+
+  float edgeW = 0.006;
+  float inkMask = 1.0 - smoothstep(-edgeW, edgeW, d);
+
+  // Cyan-to-magenta interior gradient (distinct from Rorschach's black-on-parchment)
+  float depth = clamp(-d / 0.25, 0.0, 1.0);
+  vec3 inkInner = mix(vec3(0.05, 0.90, 0.98), vec3(0.95, 0.35, 0.90), depth);
+  vec3 inkEdge  = vec3(0.06, 0.50, 0.85);
+  vec3 inkCol   = mix(inkEdge, inkInner, depth * depth);
+
+  vec3 bgCol = vec3(0.02, 0.03, 0.06);
+  vec3 col = mix(bgCol, inkCol, inkMask);
+
+  // Subtle glow around the edge
+  float glow = exp(-abs(d) * 30.0) * 0.6;
+  col += vec3(0.3, 0.6, 0.9) * glow * (0.5 + u_beatSharp * 1.2);
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+const mat = new THREE.ShaderMaterial({
+  uniforms: {
+    u_time:       { value: 0 },
+    u_nodeT:      { value: 0 },
+    u_bass:       { value: 0 },
+    u_treble:     { value: 0 },
+    u_beatSharp:  { value: 0 },
+    u_resolution: { value: new THREE.Vector2(innerWidth, innerHeight) },
+  },
+  vertexShader: VS,
+  fragmentShader: FS,
+});
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+function fakeFrame(t) {
+  return {
+    bass:      (Math.sin(t * 0.6) + 1) * 0.5,
+    treble:    (Math.sin(t * 1.8) + 1) * 0.5,
+    beatPulse: Math.max(0, Math.sin(t * 2.2)) ** 3,
+  };
+}
+
+const start = performance.now();
+function loop() {
+  const t = (performance.now() - start) / 1000;
+  const f = fakeFrame(t);
+
+  // Dual-time drift: monotonic t for noise, oscillating nodeT for node positions
+  const nodeT = Math.sin(t * 0.30) * 6.0 + Math.sin(t * 0.19) * 3.0;
+
+  const u = mat.uniforms;
+  u.u_time.value      = t;
+  u.u_nodeT.value     = nodeT;
+  u.u_bass.value      = f.bass;
+  u.u_treble.value    = f.treble;
+  u.u_beatSharp.value = f.beatPulse;
+  u.u_resolution.value.set(innerWidth, innerHeight);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+});
+loop();
+</script>
+</body>
+</html>

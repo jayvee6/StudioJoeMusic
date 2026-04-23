@@ -31,3 +31,7 @@ Secrets.xcconfig
 .vscode/
 .idea/
 *.swp
+
+## Claude Code — keep tracked skills, ignore local settings + worktrees
+.claude/settings.local.json
+.claude/worktrees/

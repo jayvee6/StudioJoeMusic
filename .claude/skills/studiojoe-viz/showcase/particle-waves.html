@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Particle Waves — studiojoe-viz showcase</title>
+<style>
+html, body { margin: 0; height: 100%; background: #05050a; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; }
+.nav { position: fixed; top: 16px; left: 16px; z-index: 10; display: flex; gap: 10px; }
+.nav a { color: #f2f2f7; text-decoration: none; font-size: 12px; background: rgba(0,0,0,0.5); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); }
+.nav a:hover { background: rgba(0,0,0,0.7); }
+.title { position: fixed; bottom: 20px; left: 20px; z-index: 10; color: #f2f2f7; }
+.title h1 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+.title p { font-size: 11px; color: #8a8a99; margin: 0; font-family: "SF Mono", ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← showcase</a></div>
+<div class="title">
+  <h1>Particle Waves</h1>
+  <p>Canvas 2D · 400 particles · persistent trails · beat-triggered radial punches</p>
+</div>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const DPR = Math.min(devicePixelRatio, 2);
+
+let W = 0, H = 0;
+function resize() {
+  W = innerWidth; H = innerHeight;
+  canvas.width  = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resize();
+addEventListener('resize', resize);
+
+const N = 400;
+const particles = [];
+for (let i = 0; i < N; i++) {
+  particles.push({
+    phase:     Math.random() * Math.PI * 2,
+    speed:     0.3 + Math.random() * 0.9,
+    yPhase:    Math.random() * Math.PI * 2,
+    ySpeed:    0.7 + Math.random() * 1.5,
+    amp:       20 + Math.random() * 80,
+    hueOffset: Math.random() * 60,
+    size:      1.2 + Math.random() * 2.2,
+    kick:      0,       // radial-kick offset, decays toward 0
+    kickX:     0,
+    kickY:     0,
+  });
+}
+
+function fakeFrame(t) {
+  const rawBeat = Math.max(0, Math.sin(t * 2.0)) ** 5;
+  return {
+    bass:      (Math.sin(t * 0.55) + 1) * 0.5,
+    mid:       (Math.sin(t * 0.9)  + 1) * 0.5,
+    treble:    (Math.sin(t * 1.9)  + 1) * 0.5,
+    beatPulse: rawBeat,
+    isBeatNow: rawBeat > 0.6 && Math.sin(t * 2.0) > Math.sin((t - 1/60) * 2.0),
+  };
+}
+
+let hueBase = 0;
+let lastBeat = 0;
+const start = performance.now();
+let lastT = 0;
+
+function loop() {
+  const t = (performance.now() - start) / 1000;
+  const dt = Math.min(0.1, t - lastT);
+  lastT = t;
+  const f = fakeFrame(t);
+
+  // Trail effect: paint a translucent dark rect each frame instead of clearing.
+  // Alpha controls how fast old particle positions fade. Higher alpha = shorter trails.
+  ctx.fillStyle = `rgba(5, 5, 12, ${0.14 + f.treble * 0.06})`;
+  ctx.fillRect(0, 0, W, H);
+
+  // On a beat onset, fire a radial kick from a random anchor
+  if (f.isBeatNow && t - lastBeat > 0.2) {
+    lastBeat = t;
+    const cx = W * (0.3 + Math.random() * 0.4);
+    const cy = H * (0.3 + Math.random() * 0.4);
+    for (const p of particles) {
+      p.kickX = cx;
+      p.kickY = cy;
+      p.kick  = 1.0;
+    }
+    hueBase = (hueBase + 40 + Math.random() * 80) % 360;
+  }
+
+  // Base field pulses hue slowly; treble jitters
+  hueBase = (hueBase + dt * (10 + f.mid * 25)) % 360;
+
+  const cx = W * 0.5, cy = H * 0.5;
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < N; i++) {
+    const p = particles[i];
+    const ang = p.phase + t * p.speed;
+
+    // Base orbital motion — lissajous-ish with y phase
+    const rX = 260 + f.bass * 180 + i * 0.25;
+    const rY = 140 + f.treble * 120 + Math.sin(t * 0.3 + i * 0.02) * 40;
+    let x = cx + Math.cos(ang) * rX + Math.sin(ang * 2 + p.yPhase + t * p.ySpeed) * p.amp;
+    let y = cy + Math.sin(ang) * rY * 0.7 + Math.cos(ang * 3 + p.yPhase) * p.amp * 0.6;
+
+    // Radial kick from the last beat anchor, decaying
+    if (p.kick > 0.001) {
+      const dx = x - p.kickX, dy = y - p.kickY;
+      const d = Math.hypot(dx, dy) + 0.01;
+      const push = p.kick * 260;
+      x += (dx / d) * push;
+      y += (dy / d) * push;
+      p.kick *= Math.exp(-dt * 2.5);
+    }
+
+    const hue = (hueBase + p.hueOffset + (p.kick > 0.1 ? 180 : 0)) % 360;
+    const sat = 85;
+    const lum = 55 + f.beatPulse * 20;
+    const sz  = p.size * (1 + f.bass * 0.6 + p.kick * 1.5);
+
+    ctx.fillStyle = `hsl(${hue}, ${sat}%, ${lum}%)`;
+    ctx.beginPath();
+    ctx.arc(x, y, sz, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
