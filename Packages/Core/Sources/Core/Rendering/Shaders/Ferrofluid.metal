@@ -54,21 +54,28 @@ fragment float4 ferrofluid_fs(FerroVSOut in [[stage_in]],
     int iCenter = clamp(int(spikeX), 0, N - 1);
 
     // Fluid surface — max-of-tent influence window + raised valley.
+    // Tent divisor 0.75 narrows the influence window so single-bin peaks stay
+    // visually isolated against quiet neighbors — mirrors the web change
+    // (musicplayer-viz/viz/ferrofluid.js).
     float surface = 0.0;
     for (int dx = -2; dx <= 2; dx++) {
         int idx = clamp(iCenter + dx, 0, N - 1);
-        float offset = (float(idx) - spikeX) / 1.25;
+        float offset = (float(idx) - spikeX) / 0.75;
         surface = max(surface, heights[idx] * tent(offset));
     }
     int iL = clamp(iCenter, 0, N - 1);
     int iR = clamp(iCenter + 1, 0, N - 1);
-    float valley = (heights[iL] + heights[iR]) * 0.30;
+    // Valley coefficient lowered so inter-spike gaps drop further, letting
+    // peaks feel proportionally taller.
+    float valley = (heights[iL] + heights[iR]) * 0.18;
     surface = max(surface, valley);
 
     float poolY = 0.04;
     // Energy scales the maximum spike height — amp of displacement. Neutral 0.5 → 1.0.
+    // Max ceiling bumped from 0.55 → 0.85 so loud moments reach near the top
+    // of the frame — matches how real audio peaks dominate the visible range.
     float energyMul = 0.6 + u.energy * 0.8;
-    float maxH = 0.55 * energyMul;
+    float maxH = 0.85 * energyMul;
     float surfaceY = poolY + surface * maxH;
     float pixelY = uv.y;
 
