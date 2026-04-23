@@ -91,7 +91,7 @@ public struct WavesUniforms {
 }
 
 public struct RorschachUniforms {
-    public var time: Float
+    public var time: Float       // monotonic — drives edge noise
     public var bass: Float
     public var mid: Float
     public var treble: Float
@@ -102,20 +102,20 @@ public struct RorschachUniforms {
     public var energy: Float
     public var danceability: Float
     public var tempoBPM: Float
-    // Metal pads struct size to a multiple of float2's alignment (8), making the
-    // shader struct 48 bytes. This field closes the 4-byte gap so
-    // MemoryLayout<RorschachUniforms>.size == 48, matching the shader exactly.
-    var _metalPad: Float
+    // Oscillating drift time — drives metaball node positions + breath. See
+    // RorschachState for the CPU-side oscillator. Replaces an earlier _metalPad
+    // field; same 48-byte layout so no shader binding change needed.
+    public var nodeT: Float
 
     public init(time: Float = 0, bass: Float = 0, mid: Float = 0, treble: Float = 0,
                 resolution: SIMD2<Float> = .zero, beatPulse: Float = 0,
                 valence: Float = 0.5, energy: Float = 0.5,
-                danceability: Float = 0.5, tempoBPM: Float = 120) {
+                danceability: Float = 0.5, tempoBPM: Float = 120, nodeT: Float = 0) {
         self.time = time; self.bass = bass; self.mid = mid; self.treble = treble
         self.resolution = resolution; self.beatPulse = beatPulse
         self.valence = valence; self.energy = energy
         self.danceability = danceability; self.tempoBPM = tempoBPM
-        self._metalPad = 0
+        self.nodeT = nodeT
     }
 }
 
@@ -156,6 +156,17 @@ public struct VortexState  {
     public var smoothScale: Float = 1.0
     public var smoothTreble: Float = 0
     public var smoothBass: Float = 0
+}
+// Rorschach wants EMA-smoothed audio (so shape reads as ink formation, not
+// per-frame twitch) plus an independent oscillating "node time" (so the blob
+// sloshes forward and back like tilting ink, not robotically). Both mirror
+// the web viz/rorschach.js — any tuning change must land in both places.
+public struct RorschachState {
+    public var smBass: Float   = 0
+    public var smMid: Float    = 0
+    public var smTreble: Float = 0
+    public var smBeat: Float   = 0
+    public var clock: Float    = 0   // monotonic accumulated dt; drives the oscillator
 }
 public struct WavesState   { public var waveSpin: Float = 0 }
 public struct LunarState   { public var rotY: Float = 0 }
@@ -378,23 +389,49 @@ public enum VisualizerFactory {
 
     private static func makeRorschach(context: MetalContext,
                                       pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
-        try FragmentRenderer<RorschachUniforms, Void>(
+        // EMA smoothing time constants (seconds) — match web viz/rorschach.js.
+        // Short enough to track song structure, long enough to filter frame jitter.
+        let tauBass:   Float = 0.5
+        let tauMid:    Float = 0.8
+        let tauTreble: Float = 0.3
+        let tauBeat:   Float = 0.25
+
+        return try FragmentRenderer<RorschachUniforms, RorschachState>(
             context: context, pixelFormat: pixelFormat,
             vertexFunction: "rorschach_vs", fragmentFunction: "rorschach_fs",
             label: "Rorschach",
-            initialState: ()
-        ) { _, a, _, res in
-            RorschachUniforms(
-                time: a.time,
-                bass: a.bass,
-                mid: a.mid,
-                treble: a.treble,
+            initialState: RorschachState()
+        ) { state, a, dt, res in
+            let dtF = Float(dt)
+            let kBass   = 1.0 - expf(-dtF / tauBass)
+            let kMid    = 1.0 - expf(-dtF / tauMid)
+            let kTreble = 1.0 - expf(-dtF / tauTreble)
+            let kBeat   = 1.0 - expf(-dtF / tauBeat)
+            state.smBass   += (a.bass      - state.smBass)   * kBass
+            state.smMid    += (a.mid       - state.smMid)    * kMid
+            state.smTreble += (a.treble    - state.smTreble) * kTreble
+            state.smBeat   += (a.beatPulse - state.smBeat)   * kBeat
+            state.clock    += dtF
+
+            // Dual-time driver — monotonic `time` for edge noise (never plays
+            // backwards), oscillating `nodeT` for metaball positions + breath
+            // (sloshes forward and back). Matches web viz/rorschach.js.
+            let clock = state.clock
+            let nodeT = (sinf(clock * 0.30) * 6.0 + sinf(clock * 0.19) * 3.0)
+
+            // Raw beatPulse passes through for sharp per-beat drop punches.
+            return RorschachUniforms(
+                time: clock,
+                bass: state.smBass,
+                mid: state.smMid,
+                treble: state.smTreble,
                 resolution: res,
                 beatPulse: a.beatPulse,
                 valence: a.valence,
                 energy: a.energy,
                 danceability: a.danceability,
-                tempoBPM: a.tempoBPM
+                tempoBPM: a.tempoBPM,
+                nodeT: nodeT
             )
         }
     }
