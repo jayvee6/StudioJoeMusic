@@ -1,6 +1,47 @@
 import Metal
 import simd
 
+// MARK: - Matrix helpers (RH camera, Metal NDC depth [0, 1])
+//
+// Metal clips on z ∈ [0, 1]; we build a right-handed view (camera looks down
+// its -Z) and a right-handed perspective that squashes view-space into that
+// depth range. These are free functions rather than simd_float4x4 extensions
+// so shader-side callers (WireTerrain only, for now) can use them without
+// importing additional helpers. If a future viz lands a different convention,
+// add a sibling helper — don't overload these.
+
+@inlinable
+public func perspectiveMatrix(fovyRadians fovy: Float,
+                              aspect: Float,
+                              near: Float, far: Float) -> simd_float4x4 {
+    let ys = 1 / tanf(fovy * 0.5)
+    let xs = ys / aspect
+    let zs = far / (near - far)
+    return simd_float4x4(columns: (
+        SIMD4<Float>(xs,  0,    0,         0),
+        SIMD4<Float>( 0, ys,    0,         0),
+        SIMD4<Float>( 0,  0,   zs,        -1),
+        SIMD4<Float>( 0,  0, zs * near,    0)
+    ))
+}
+
+@inlinable
+public func lookAtMatrix(eye: SIMD3<Float>,
+                         center: SIMD3<Float>,
+                         up: SIMD3<Float>) -> simd_float4x4 {
+    // Right-handed: forward runs from eye toward center; we store -f in the
+    // third row so the camera's -Z maps to forward in view space.
+    let f = simd_normalize(center - eye)
+    let s = simd_normalize(simd_cross(f, up))
+    let u = simd_cross(s, f)
+    return simd_float4x4(columns: (
+        SIMD4<Float>( s.x,  u.x, -f.x, 0),
+        SIMD4<Float>( s.y,  u.y, -f.y, 0),
+        SIMD4<Float>( s.z,  u.z, -f.z, 0),
+        SIMD4<Float>(-simd_dot(s, eye), -simd_dot(u, eye), simd_dot(f, eye), 1)
+    ))
+}
+
 // MARK: - Uniform structs (layout-compatible with corresponding Metal structs)
 
 public struct BlobUniforms {
@@ -314,6 +355,8 @@ public enum VisualizerFactory {
             return try SpectrogramRenderer(context: context, pixelFormat: pixelFormat)
         case .siriWaveform:
             return try makeSiriWaveform(context: context, pixelFormat: pixelFormat)
+        case .wireTerrain:
+            return try makeWireTerrain(context: context, pixelFormat: pixelFormat)
         }
     }
 
@@ -688,5 +731,105 @@ public enum VisualizerFactory {
                 _pad3: 0
             )
         }
+    }
+
+    // MARK: - Mesh visualizers
+
+    private static func makeWireTerrain(context: MetalContext,
+                                        pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+        // Plane geometry — 30×30 world units on the XZ plane, 128×128 cells =
+        // 129×129 verts laid out as a triangle list (2 tris × 128² cells × 3
+        // verts = 98,304 vertices). Built once at factory time; MeshRenderer
+        // uploads it to an .storageModeShared MTLBuffer and reads it every
+        // frame. SIMD3<Float> stride is 16 B (includes trailing padding), so
+        // the buffer is 98,304 × 16 ≈ 1.5 MB. Parity with web
+        // THREE.PlaneGeometry(30, 30, 128, 128).rotateX(-π/2).
+        let subdivs    = 128
+        let planeSize: Float = 30.0
+        let step:      Float = planeSize / Float(subdivs)
+        let halfSize:  Float = planeSize / 2.0
+
+        var verts: [SIMD3<Float>] = []
+        verts.reserveCapacity(subdivs * subdivs * 6)
+        for zi in 0..<subdivs {
+            for xi in 0..<subdivs {
+                let x0 = -halfSize + Float(xi)     * step
+                let x1 = -halfSize + Float(xi + 1) * step
+                let z0 = -halfSize + Float(zi)     * step
+                let z1 = -halfSize + Float(zi + 1) * step
+                // Two tris per cell, counter-clockwise wound when viewed from
+                // +Y down. `.lines` triangleFillMode draws only the edges, so
+                // winding only matters if we ever switch the fill mode back.
+                verts.append(SIMD3<Float>(x0, 0, z0))
+                verts.append(SIMD3<Float>(x1, 0, z0))
+                verts.append(SIMD3<Float>(x1, 0, z1))
+                verts.append(SIMD3<Float>(x0, 0, z0))
+                verts.append(SIMD3<Float>(x1, 0, z1))
+                verts.append(SIMD3<Float>(x0, 0, z1))
+            }
+        }
+
+        let vertexCount  = verts.count
+        let vertexStride = MemoryLayout<SIMD3<Float>>.stride
+        let vertexData = verts.withUnsafeBufferPointer { buf -> Data in
+            guard let base = buf.baseAddress else { return Data() }
+            return Data(bytes: base, count: buf.count * vertexStride)
+        }
+
+        return try MeshRenderer<WireTerrainUniforms, WireTerrainState>(
+            context: context,
+            pixelFormat: pixelFormat,
+            vertexFunction: "wireterrain_vs",
+            fragmentFunction: "wireterrain_fs",
+            label: "WireTerrain",
+            vertexData: vertexData,
+            vertexCount: vertexCount,
+            vertexStride: vertexStride,
+            triangleFillMode: .lines,
+            initialState: WireTerrainState(),
+            step: { state, audio, dt, res in
+                // Monotonic clock drives both the vertex FBM phase and the
+                // camera oscillator — parity with web `elapsed = t - startT`.
+                state.clock += dt
+                let clock = state.clock
+
+                // Camera math — verbatim mirror of viz/wire-terrain.js:
+                //   cAng = sin(elapsed*0.08)*0.9 + elapsed*0.05
+                //   camY = 7.5 + sin(elapsed*0.3)*1.2
+                //   camera.position = (cos(cAng)*14, camY, sin(cAng)*14)
+                //   lookAt(0, 1.0 + bass*0.8, 0)
+                // The web applies `react` to bass before passing it into
+                // lookAt; iOS has no react slider yet, so `audio.bass` enters
+                // raw (react == 1.0).
+                let orbitAng = sinf(clock * 0.08) * 0.9 + clock * 0.05
+                let camY     = 7.5 + sinf(clock * 0.3) * 1.2
+                let eye      = SIMD3<Float>(cosf(orbitAng) * 14.0,
+                                             camY,
+                                             sinf(orbitAng) * 14.0)
+                let center   = SIMD3<Float>(0.0, 1.0 + audio.bass * 0.8, 0.0)
+                let up       = SIMD3<Float>(0.0, 1.0, 0.0)
+
+                let aspect = max(0.0001, res.x / res.y)
+                let proj   = perspectiveMatrix(
+                    fovyRadians: 55.0 * .pi / 180.0,
+                    aspect: aspect,
+                    near: 0.1,
+                    far: 200.0
+                )
+                let view   = lookAtMatrix(eye: eye, center: center, up: up)
+
+                return WireTerrainUniforms(
+                    projectionMatrix: proj,
+                    viewMatrix:       view,
+                    time:             clock,
+                    bass:             audio.bass,
+                    treble:           audio.treble,
+                    beatPulse:        audio.beatPulse,
+                    resolution:       res,
+                    fogDensity:       0.035,
+                    _pad0:            0
+                )
+            }
+        )
     }
 }
