@@ -149,6 +149,48 @@ public struct KaleidoUniforms {
     public var tempoBPM: Float = 120
 }
 
+// Siri Waveform — 4 additive sin layers drawn in a single fragment pass.
+// Layout (48 bytes total; MUST match Shaders/SiriWaveform.metal):
+//   offset  0: time        (Float)     — seconds, monotonic
+//   offset  4: beatPulse   (Float)     — 0..1
+//   offset  8: _pad0       (Float)     — align bandEnergy to 16B
+//   offset 12: _pad1       (Float)
+//   offset 16: bandEnergy  (SIMD4<Float>) — magenta/cyan/blue/violet band mean
+//   offset 32: resolution  (SIMD2<Float>) — drawable px
+//   offset 40: _pad2       (Float)
+//   offset 44: _pad3       (Float)
+// SIMD4<Float> requires 16B alignment; two pad floats place it on the right
+// boundary. The trailing pads round the struct up to a 16B multiple so Metal
+// doesn't read past the buffer.
+public struct SiriWaveformUniforms {
+    public var time: Float
+    public var beatPulse: Float
+    public var _pad0: Float
+    public var _pad1: Float
+    public var bandEnergy: SIMD4<Float>
+    public var resolution: SIMD2<Float>
+    public var _pad2: Float
+    public var _pad3: Float
+
+    public init(time: Float = 0,
+                beatPulse: Float = 0,
+                _pad0: Float = 0,
+                _pad1: Float = 0,
+                bandEnergy: SIMD4<Float> = .zero,
+                resolution: SIMD2<Float> = .zero,
+                _pad2: Float = 0,
+                _pad3: Float = 0) {
+        self.time = time
+        self.beatPulse = beatPulse
+        self._pad0 = _pad0
+        self._pad1 = _pad1
+        self.bandEnergy = bandEnergy
+        self.resolution = resolution
+        self._pad2 = _pad2
+        self._pad3 = _pad3
+    }
+}
+
 // MARK: - State structs
 
 public struct MandalaState { public var rot: Float = 0; public var hue: Float = 0 }
@@ -175,6 +217,7 @@ public struct RorschachState {
 public struct WavesState   { public var waveSpin: Float = 0 }
 public struct LunarState   { public var rotY: Float = 0 }
 public struct KaleidoState { public var camZ: Float = 0; public var hue: Float = 0; public var twist: Float = 0 }
+public struct SiriWaveformState { public var clock: Float = 0 }
 
 // MARK: - Factory
 
@@ -209,6 +252,10 @@ public enum VisualizerFactory {
             return nil
         case .fireworks:
             return nil   // rendered by FireworksView (SwiftUI Canvas), not Metal
+        case .spectrogram:
+            return try SpectrogramRenderer(context: context, pixelFormat: pixelFormat)
+        case .siriWaveform:
+            return try makeSiriWaveform(context: context, pixelFormat: pixelFormat)
         }
     }
 
@@ -535,6 +582,52 @@ public enum VisualizerFactory {
                 energy: a.energy,
                 danceability: a.danceability,
                 tempoBPM: a.tempoBPM
+            )
+        }
+    }
+
+    private static func makeSiriWaveform(context: MetalContext,
+                                         pixelFormat: MTLPixelFormat) throws -> VisualizerRenderer {
+        // Web `react` slider default is 1.0; iOS has no slider yet, so use 1.0.
+        // Parity rule: any tuning that touches these coefficients must land on
+        // the web side too — see .claude/skills/studiojoe-viz/references/parity.md.
+        return try FragmentRenderer<SiriWaveformUniforms, SiriWaveformState>(
+            context: context, pixelFormat: pixelFormat,
+            vertexFunction: "siriwave_vs", fragmentFunction: "siriwave_fs",
+            label: "SiriWaveform",
+            initialState: SiriWaveformState()
+        ) { state, a, dt, res in
+            state.clock += dt
+
+            // Per-band mel-bin means — one band per layer. Indices mirror the
+            // web LAYERS[].bandLo/bandHi exactly (see viz/siri-waveform.js):
+            //   magenta  0..4   (sub/bass)
+            //   cyan     5..12  (low-mids)
+            //   blue     13..20 (mids)
+            //   violet   21..31 (treble)
+            func bandMean(_ mags: [Float], _ lo: Int, _ hi: Int) -> Float {
+                guard lo <= hi, lo >= 0, !mags.isEmpty else { return 0 }
+                let hiClamp = min(hi, mags.count - 1)
+                if lo > hiClamp { return 0 }
+                var sum: Float = 0
+                for i in lo...hiClamp { sum += mags[i] }
+                return sum / Float(hiClamp - lo + 1)
+            }
+            let mags = a.magnitudes
+            let e0 = bandMean(mags,  0,  4)
+            let e1 = bandMean(mags,  5, 12)
+            let e2 = bandMean(mags, 13, 20)
+            let e3 = bandMean(mags, 21, 31)
+
+            return SiriWaveformUniforms(
+                time: state.clock,
+                beatPulse: a.beatPulse,
+                _pad0: 0,
+                _pad1: 0,
+                bandEnergy: SIMD4<Float>(e0, e1, e2, e3),
+                resolution: res,
+                _pad2: 0,
+                _pad3: 0
             )
         }
     }
