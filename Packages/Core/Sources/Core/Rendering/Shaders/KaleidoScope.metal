@@ -92,7 +92,7 @@ fragment float4 kaleido_fs(KVSOut in [[stage_in]],
 
     float sat = 0.88 + u.bass * 0.12;
     float lum = 0.12 + ringBright * 0.22 + ring2Bright * 0.08 + spokeBright * 0.18;
-    lum *= (0.65 + u.energy * 0.70);
+    lum *= (0.70 + u.mid * 0.60);
     lum  = min(lum, 0.85);
 
     float3 col = khsl2rgb(fract(hue), sat, lum);
