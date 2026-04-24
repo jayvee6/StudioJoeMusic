@@ -17,6 +17,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
     case fireworks
     case spectrogram
     case siriWaveform
+    case wireTerrain
 
     public var id: Int { rawValue }
 
@@ -38,6 +39,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .fireworks:     return "Fireworks"
         case .spectrogram:   return "Spectrogram"
         case .siriWaveform:  return "Siri"
+        case .wireTerrain:   return "Terrain"
         }
     }
 
@@ -59,6 +61,7 @@ public enum VisualizerMode: Int, CaseIterable, Identifiable, Sendable {
         case .fireworks:     return "party.popper.fill"
         case .spectrogram:   return "waveform.path.ecg.rectangle"
         case .siriWaveform:  return "waveform"
+        case .wireTerrain:   return "square.grid.3x3"
         }
     }
 
